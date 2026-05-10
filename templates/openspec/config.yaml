@@ -1,0 +1,60 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts (proposal, design, tasks).
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# ---------------------------------------------------------------------------
+# remcc baseline (recommended) — uncomment to apply
+# ---------------------------------------------------------------------------
+#
+# When changes in this repo are applied via remcc's `opsx-apply` workflow,
+# the agent runs unattended on a GitHub Actions runner (ubuntu-latest,
+# ephemeral, headless). The block below tells the drafting agent to plan
+# tasks that can be executed end-to-end in that environment.
+#
+# Merge into the `context:` and `rules:` keys above (do not introduce
+# duplicate top-level keys). If you sometimes apply changes locally
+# instead of via the runner, prune the rules that are too strict for
+# your local flow — these are guidance, not a hard contract.
+#
+# context: |
+#   Changes in this repo are usually applied by a Claude Code agent
+#   running in GitHub Actions (ubuntu-latest, ephemeral, headless).
+#   Tasks must be executable end-to-end without human interaction. See
+#   the "Runner profile" section in the remcc repo's docs/SETUP.md for
+#   the tooling that is preinstalled on the runner.
+#
+# rules:
+#   tasks:
+#     - Every verification step must be runnable headlessly (curl,
+#       docker exec, log grep) — no "open the browser", "click", or
+#       "inspect manually" steps.
+#     - Long-running processes (servers, `compose up`, `pnpm dev`) must
+#       be explicitly backgrounded and torn down within the same task
+#       block; never leave a process running across tasks.
+#     - Assume cold caches on every run. Do not write task sequences
+#       that silently depend on artifacts left behind by an earlier
+#       task in a previous run.
+#     - Only the tooling listed in the runner profile is preinstalled.
+#       Anything else must be installed explicitly as part of the task.
+#     - No interactive prompts or TTY-only commands. Pass flags, not
+#       stdin.
+#     - Secrets are available only via env (`ANTHROPIC_API_KEY`, plus
+#       whatever is wired into repo secrets). Do not assume cloud
+#       credentials are present.

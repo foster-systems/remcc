@@ -69,12 +69,44 @@ local development.
   cover (an empty `permissions.allow`). If you want a record that
   remcc ran, leave the file untouched.
 
+### `openspec/config.yaml` — runner-aware drafting hints (optional)
+
+The template at `templates/openspec/config.yaml` carries a
+commented-out "remcc baseline" block: a `context:` paragraph and a
+`rules.tasks:` list that tell the OpenSpec drafting agents
+(proposal / design / tasks) that the change will likely be applied
+unattended on a GitHub Actions runner. The intent is to catch
+runner-incompatible task shapes (manual browser checks, lingering
+background processes, undeclared tool dependencies) at *drafting*
+time rather than discovering them mid-apply on the runner.
+
+This is opt-in. Adopters who sometimes apply changes locally may
+want to prune individual rules; adopters who always apply via the
+runner will likely want the whole block.
+
+- **No existing `openspec/config.yaml` (you need to initialise
+  OpenSpec anyway):** copy the template directly:
+  ```sh
+  cp "${REMCC}/templates/openspec/config.yaml" openspec/config.yaml
+  ```
+  Then open the file and uncomment the `context:` and `rules:`
+  blocks under "remcc baseline".
+- **Existing `openspec/config.yaml`:** open both files side-by-side
+  and merge the `context:` paragraph and the `rules.tasks:` entries
+  from the template's "remcc baseline" block into your existing
+  keys (do not introduce duplicate top-level keys). If you already
+  have project-specific entries under `rules.tasks:`, append the
+  remcc rules below them.
+
+The "Runner profile" section near the bottom of this document
+enumerates the tooling the rules assume is preinstalled.
+
 Commit and push the `setup-remcc` branch, then open a PR and merge
 it to `main`:
 
 ```sh
-git add .github/workflows/opsx-apply.yml .claude/settings.json
-git commit -m "Adopt remcc: workflow + Claude settings"
+git add .github/workflows/opsx-apply.yml .claude/settings.json openspec/config.yaml
+git commit -m "Adopt remcc: workflow + Claude settings + drafting hints"
 git push -u origin setup-remcc
 gh pr create --base main --head setup-remcc --fill
 gh pr merge --merge --delete-branch
@@ -155,6 +187,57 @@ Re-running the script later is a no-op.
   occasionally adds new constraints. Capture the full error and
   open an issue on the remcc repo before working around it locally.
 
+## Runner profile
+
+The `opsx-apply` workflow runs on GitHub-hosted `ubuntu-latest`.
+The drafting hints in `templates/openspec/config.yaml` tell the
+OpenSpec agents to assume the tooling listed here is available
+without further setup; anything else must be installed by the
+task itself.
+
+### Provided by the workflow
+
+| Tool | Source | Notes |
+|---|---|---|
+| Node.js 20 | `actions/setup-node@v4` | Pinned by the workflow; do not assume the ubuntu-latest default Node version |
+| pnpm | `pnpm/action-setup@v4` | Resolves the version from your repo's `package.json#packageManager` if set, otherwise the action's latest |
+| Claude Code CLI | `npm install -g @anthropic-ai/claude-code` | Invoked with `--dangerously-skip-permissions` |
+| OpenSpec CLI | `npm install -g @fission-ai/openspec@latest` | Used for the post-apply validate step |
+| `ANTHROPIC_API_KEY` | Repo secret, exposed as env | Set by `gh-bootstrap.sh`; redacted from logs by GitHub |
+
+### Provided by the `ubuntu-latest` image
+
+The drafting hints assume the standard tools that GitHub bundles
+into `ubuntu-latest`. The ones most likely to come up in tasks:
+
+| Tool | Notes |
+|---|---|
+| Docker Engine + Compose v2 | `docker`, `docker compose` (no separate `docker-compose` v1) |
+| `git`, `gh` | `gh` is pre-authenticated to the run's `GITHUB_TOKEN` for the same repo |
+| `curl`, `wget`, `jq` | Use these for headless verification |
+| `bash`, `sh` | Default shell for `run:` steps is `bash -e` |
+| Postgres / MySQL clients | `psql`, `mysql` are present; the *servers* are not running by default |
+| Python 3, build tools (`gcc`, `make`) | Useful for one-off scripts and native deps |
+
+The full image manifest changes over time; the canonical reference
+is GitHub's
+[`runner-images`](https://github.com/actions/runner-images)
+repository (`images/ubuntu/Ubuntu2404-Readme.md` for `ubuntu-latest`).
+If you find yourself relying on something not listed in either
+table above, install it explicitly in the relevant task — do not
+assume future-you (or future-runner) will have it.
+
+### What the runner does *not* provide
+
+Worth calling out because tasks frequently assume them:
+
+- No GUI / browser. Verification must use HTTP, exec, or log inspection.
+- No long-lived state across runs. Every apply starts from a fresh checkout
+  with cold Docker / pnpm caches unless the workflow opts into caching.
+- No cloud credentials beyond what you've explicitly added as repo secrets.
+- No interactive TTY. Commands that read from stdin or block on a prompt
+  will hang the run until the 180-minute job timeout.
+
 ## Step 4 — smoke test
 
 Push a trivial change branch to verify the full path runs end to end.
@@ -212,7 +295,12 @@ remcc is reversible. To remove it from a target repository:
    `templates/claude/settings.json`, leave it; it is harmless and
    contains no remcc-specific configuration. If you did not have
    one before, you can delete it: `git rm .claude/settings.json`.
-4. Commit and push the workflow removal on a regular feature
+4. **OpenSpec drafting hints** — if you merged the "remcc baseline"
+   block into `openspec/config.yaml`, delete those lines (the
+   `context:` paragraph and `rules.tasks:` entries that reference
+   the GitHub Actions runner). The rest of the file is your own
+   project configuration; leave it alone.
+5. Commit and push the workflow removal on a regular feature
    branch and merge via PR.
 
 After these steps, no remcc-specific configuration remains on the
