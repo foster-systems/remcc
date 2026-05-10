@@ -83,36 +83,92 @@ pushes are blocked, and a pull request is required for merging.
   checkout with new commits
 - **THEN** GitHub rejects the push citing branch protection
 
-### Requirement: Bootstrap configures push ruleset for change branches
+### Requirement: Bootstrap restricts bot to change/** branches
 
-`gh-bootstrap.sh` SHALL configure a repository push ruleset that
-restricts pushes from `GITHUB_TOKEN` (the auto-provisioned bot
-identity) to branches matching `change/**`, and SHALL block such
-pushes from modifying any path under `.github/**`.
+`gh-bootstrap.sh` SHALL configure a repository branch ruleset that
+prevents non-admin actors from creating, updating, deleting, or
+non-fast-forwarding any ref except those matching
+`refs/heads/change/**`. Branch rulesets are available on both
+user-owned and organization-owned repositories.
 
 #### Scenario: Bot push to a non-change branch is rejected
 
 - **WHEN** the workflow attempts to push commits to a branch not
   matching `change/**` using `GITHUB_TOKEN`
-- **THEN** the push is rejected by the ruleset
+- **THEN** the push is rejected by the ruleset and branch protection
 
-#### Scenario: Bot push that touches .github/** is rejected
+### Requirement: Bootstrap configures .github/** push ruleset when supported
 
-- **WHEN** the workflow attempts to push commits to a `change/**`
-  branch where any file under `.github/**` has been modified
-- **THEN** the push is rejected by the ruleset
+`gh-bootstrap.sh` SHALL configure a repository push ruleset blocking
+non-admin pushes that modify any path under `.github/**`, **when the
+target repository is organization-owned**. GitHub does not support
+push rulesets on user-owned repositories; on user-owned targets the
+script SHALL emit a clear warning identifying the limitation,
+SHALL NOT fail, and SHALL continue with the remaining bootstrap
+steps. SETUP.md and SECURITY.md document the resulting reliance on
+PR review.
 
-### Requirement: Bootstrap enables secret scanning and push protection
+#### Scenario: Org-owned target gets the push ruleset
+
+- **WHEN** the operator runs `gh-bootstrap.sh` against an
+  organization-owned repository
+- **THEN** the script creates the push ruleset and the workflow
+  attempting to push commits modifying `.github/**` from a
+  `change/**` branch is rejected
+
+#### Scenario: User-owned target produces a documented warning
+
+- **WHEN** the operator runs `gh-bootstrap.sh` against a user-owned
+  repository
+- **THEN** the script prints a warning that push rulesets are
+  unavailable and that `.github/**` enforcement falls to PR review,
+  and continues with subsequent steps
+
+### Requirement: Bootstrap enables secret scanning and push protection when supported
 
 `gh-bootstrap.sh` SHALL enable GitHub secret scanning and secret
-push protection on the target repository.
+push protection on the target repository **when the feature is
+available** for that repository's visibility and plan. Public
+repositories receive the feature for free; private repositories
+require GitHub Advanced Security (organization-level paid feature).
+On private repositories without GHAS, the script SHALL emit a clear
+warning identifying the limitation, SHALL NOT fail, and SHALL
+continue with the remaining bootstrap steps. SECURITY.md documents
+the resulting reliance on Actions log redaction as the only
+secret-leak protection in that configuration.
 
-#### Scenario: Commit containing a secret is blocked at push time
+#### Scenario: Public or GHAS-enabled target gets secret scanning
 
-- **WHEN** a commit contains a token matching a known secret
-  pattern (e.g., an Anthropic API key)
-- **AND** the commit is pushed to any branch
+- **WHEN** the operator runs `gh-bootstrap.sh` against a repository
+  where secret scanning is available
+- **AND** a subsequent commit contains a token matching a known
+  secret pattern
 - **THEN** the push is rejected by secret push protection
+
+#### Scenario: Private user-owned target produces a documented warning
+
+- **WHEN** the operator runs `gh-bootstrap.sh` against a private
+  repository where secret scanning is unavailable
+- **THEN** the script prints a warning that secret scanning is
+  unavailable and that the only remaining secret-leak protection is
+  Actions log redaction, and continues with subsequent steps
+
+### Requirement: Bootstrap enables Actions to create pull requests
+
+`gh-bootstrap.sh` SHALL enable the GitHub Actions setting that allows
+the auto-provisioned `GITHUB_TOKEN` to open pull requests, by setting
+both `default_workflow_permissions` to `write` and
+`can_approve_pull_request_reviews` to `true` on the
+`/repos/{owner}/{repo}/actions/permissions/workflow` endpoint. The
+workflow does not exercise the approve capability; the toggle is
+required because GitHub couples create-PR and approve-PR under one
+flag.
+
+#### Scenario: Workflow's PR-creation step succeeds after bootstrap
+
+- **WHEN** the workflow runs `gh pr create` from inside a runner
+  using `GITHUB_TOKEN` after bootstrap has been applied
+- **THEN** the PR is created without a permissions error
 
 ### Requirement: Bootstrap installs ANTHROPIC_API_KEY secret
 
@@ -133,9 +189,12 @@ the key value to stdout or commit it to disk.
 The repo SHALL include `docs/SETUP.md`, `docs/SECURITY.md`, and
 `docs/COSTS.md`. SETUP.md SHALL contain a complete adoption
 checklist runnable without external context. SECURITY.md SHALL
-document the two-layer safety model and enumerate the controls
-each layer relies on. COSTS.md SHALL document Anthropic admin
-console budget configuration and GitHub Actions minute usage.
+document the two-layer safety model, enumerate the controls each
+layer relies on, **and explicitly call out which controls are
+unavailable on user-owned and on private-without-GHAS targets**,
+together with the substitutions that take their place. COSTS.md
+SHALL document Anthropic admin console budget configuration and
+GitHub Actions minute usage.
 
 #### Scenario: A second adopter completes setup using docs alone
 

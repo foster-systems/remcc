@@ -32,15 +32,24 @@ proceeding.
 ## Step 1 — copy the template files
 
 From a clone of the target repository, with this remcc repo also
-cloned alongside:
+cloned alongside, on a fresh feature branch:
 
 ```sh
 # Adjust REMCC if your remcc clone is elsewhere.
 REMCC=../remcc
 
+git checkout main
+git pull --ff-only
+git checkout -b setup-remcc
+
 mkdir -p .github/workflows
 cp "${REMCC}/templates/workflows/opsx-apply.yml" .github/workflows/opsx-apply.yml
 ```
+
+The `setup-remcc` branch is a regular feature branch — *not* a
+`change/**` branch. After step 3, the `change/**` namespace is
+restricted to the workflow's bot identity, and the bootstrap
+configuration would block your local pushes to such a branch.
 
 ### `.claude/settings.json` — merge, don't overwrite
 
@@ -60,9 +69,20 @@ local development.
   cover (an empty `permissions.allow`). If you want a record that
   remcc ran, leave the file untouched.
 
-Commit and push these changes on a regular feature branch (not a
-`change/**` branch — that branch namespace will be restricted to the
-bot in step 3).
+Commit and push the `setup-remcc` branch, then open a PR and merge
+it to `main`:
+
+```sh
+git add .github/workflows/opsx-apply.yml .claude/settings.json
+git commit -m "Adopt remcc: workflow + Claude settings"
+git push -u origin setup-remcc
+gh pr create --base main --head setup-remcc --fill
+gh pr merge --merge --delete-branch
+```
+
+The merge must happen *before* the smoke test, because the workflow
+file needs to be on `main` for `change/**` branches forked from `main`
+to inherit it.
 
 ## Step 2 — verify the workflow file at a glance
 
@@ -89,45 +109,70 @@ The script:
 1. Verifies `gh` is authenticated and you are inside a git repo.
 2. Configures branch protection on `main` (PR required, no force
    push, no deletions).
-3. Creates two rulesets, with admin bypass:
-   - A **branch ruleset** that blocks any non-admin actor from
-     creating, updating, deleting, or non-fast-forwarding refs that
-     do not match `refs/heads/change/**`. The workflow's
-     `GITHUB_TOKEN` is therefore confined to `change/**`.
-   - A **push ruleset** that blocks non-admin pushes from modifying
-     paths under `.github/**`. The workflow cannot rewrite CI; you
-     can, because you bypass.
-4. Enables GitHub secret scanning and secret push protection.
-5. Prompts for `ANTHROPIC_API_KEY` (input hidden) and uploads it as
-   the repository secret `ANTHROPIC_API_KEY`. If the variable is
-   already set in your shell, the script picks it up and does not
-   prompt.
-6. Runs an idempotency smoke test: re-applies every change and
+3. Creates a **branch ruleset** that blocks any non-admin actor from
+   creating, updating, deleting, or non-fast-forwarding refs that
+   do not match `refs/heads/change/**`. The workflow's
+   `GITHUB_TOKEN` is therefore confined to `change/**`. Admin
+   bypasses, so you keep direct access.
+4. Creates a **push ruleset** blocking non-admin pushes that modify
+   paths under `.github/**`, **if the target is an
+   organization-owned repo**. On user-owned repos, push rulesets
+   are unavailable — the script prints a warning and continues.
+   On user-owned repos, `.github/**` modifications must be caught
+   during your PR review.
+5. Enables **secret scanning + secret push protection**, **if the
+   feature is available** for the target repo. Public repos get it
+   for free; private repos require GitHub Advanced Security. On
+   private repos without GHAS, the script prints a warning and
+   continues. The remaining secret-leak protection is GitHub
+   Actions log redaction (built into Actions, no setup required).
+6. Enables the GitHub Actions setting that allows `GITHUB_TOKEN`
+   to open pull requests. This setting defaults to off; without it,
+   the workflow's PR-creation step always fails.
+7. Prompts for `ANTHROPIC_API_KEY` (input hidden) and uploads it as
+   the repository secret. If the variable is already set in your
+   shell, the script picks it up and does not prompt.
+8. Runs an idempotency smoke test: re-applies every change and
    diffs the resulting state. A diff is a bug — please report it.
 
 Re-running the script later is a no-op.
+
+> **What this means for user-owned private repos.** The model loses
+> two outside-the-runner controls on user-owned private targets
+> (push ruleset and secret scanning). The bot is still confined to
+> `change/**` and cannot push to `main`. The substitutions —
+> `.github/**` is gated by your PR review; secret-shaped commits
+> are not blocked at push time, only redacted from logs — are
+> documented in `SECURITY.md`. If you need the full model, host
+> the target repo under a GitHub organization with GHAS.
 
 ### If a step fails
 
 - **"gh is not authenticated"**: run `gh auth login` and retry.
 - **403 errors from `gh api`**: you are not admin on the target repo.
   Ask the owner to grant admin or run the script themselves.
-- **secret_scanning enable fails**: secret scanning requires either
-  a public repo or GitHub Advanced Security on the plan. Address
-  the underlying issue rather than skipping this step — secret push
-  protection is the backstop against `ANTHROPIC_API_KEY` accidentally
-  landing in a commit.
+- **422 errors not handled by the script's warnings**: GitHub
+  occasionally adds new constraints. Capture the full error and
+  open an issue on the remcc repo before working around it locally.
 
 ## Step 4 — smoke test
 
 Push a trivial change branch to verify the full path runs end to end.
 
-1. Create an OpenSpec change under `openspec/changes/test-apply/`
-   with whatever scaffolding `openspec` produces by default. Any
-   minimal change with a `tasks.md` is fine. Commit it on `main`
-   locally.
+1. Create an OpenSpec change directory at `openspec/changes/test-apply/`
+   with at minimum: `proposal.md`, `tasks.md`, and any specs/design
+   that `openspec validate test-apply` requires for your project's
+   schema. The trivial-task pattern works well — one task that
+   creates a single small file is enough to exercise the path. Land
+   this on `main` via the same feature-branch + PR flow you used in
+   step 1, or as admin via direct push (you will see a
+   `remote: Bypassed rule violations for refs/heads/main` message
+   in the output — that is GitHub recording your admin bypass and
+   is expected).
 2. Create and push the change branch:
    ```sh
+   git checkout main
+   git pull --ff-only
    git checkout -b change/test-apply
    git push -u origin change/test-apply
    ```
@@ -154,10 +199,11 @@ remcc is reversible. To remove it from a target repository:
    ```sh
    bash "${REMCC}/templates/gh-bootstrap.sh" --uninstall
    ```
-   This deletes the two rulesets, removes branch protection on
-   `main`, disables secret scanning + push protection, and deletes
-   the `ANTHROPIC_API_KEY` repository secret. It does not touch
-   any files in your repository.
+   This deletes any rulesets the script created, removes branch
+   protection on `main`, disables secret scanning + push protection
+   (where applicable), reverts the Allow-Actions-create-PRs toggle,
+   and deletes the `ANTHROPIC_API_KEY` repository secret. It does
+   not touch any files in your repository.
 2. **Workflow file** — delete it from the repository:
    ```sh
    git rm .github/workflows/opsx-apply.yml

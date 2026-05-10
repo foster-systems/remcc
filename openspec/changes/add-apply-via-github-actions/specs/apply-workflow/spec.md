@@ -155,9 +155,9 @@ empty commit.
 
 ### Requirement: Push the change branch
 
-If the workflow created or already had commits ahead of `origin`,
-the workflow SHALL push them to the change branch using
-`GITHUB_TOKEN`.
+The workflow SHALL push commits to the change branch using
+`GITHUB_TOKEN` whenever the local branch is ahead of `origin`. The
+workflow SHALL NOT push when no commits are ahead of `origin`.
 
 #### Scenario: New commits are pushed to the branch
 
@@ -187,9 +187,9 @@ SHALL post a comment summarising the run.
 
 ### Requirement: Surface failures as draft PR
 
-If either the apply or validate step exited non-zero, any PR created
-by the workflow SHALL be opened as a draft. PRs that already exist
-SHALL NOT be silently switched between draft and ready.
+Any PR the workflow creates SHALL be opened as a draft whenever
+either the apply or validate step exited non-zero. The workflow
+SHALL NOT silently switch existing PRs between draft and ready.
 
 #### Scenario: Apply failure produces a draft PR
 

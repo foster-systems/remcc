@@ -153,6 +153,16 @@ find_ruleset_id() {
     | head -n1
 }
 
+owner_type() {
+  local repo="$1"
+  gh api "repos/${repo}" --jq .owner.type 2>/dev/null
+}
+
+push_rulesets_supported() {
+  local repo="$1"
+  [ "$(owner_type "${repo}")" = "Organization" ]
+}
+
 reconcile_ruleset() {
   local repo="$1" name="$2" body="$3" id
   id="$(find_ruleset_id "${repo}" "${name}" || true)"
@@ -176,6 +186,14 @@ configure_branch_ruleset() {
 configure_push_ruleset() {
   local repo="$1"
   log "Push ruleset (bot blocked from editing .github/**)"
+  if ! push_rulesets_supported "${repo}"; then
+    sub "WARNING: GitHub push rulesets are only available on organization-owned"
+    sub "repositories. ${repo} is user-owned, so the .github/** push restriction"
+    sub "cannot be enforced via rulesets. The branch ruleset still confines the"
+    sub "bot to change/** branches; .github/** edits within agent PRs must be"
+    sub "caught by your PR review. See docs/SECURITY.md for the full picture."
+    return 0
+  fi
   reconcile_ruleset "${repo}" "${RULESET_PUSH_NAME}" "$(want_push_ruleset_json)"
 }
 
@@ -194,9 +212,30 @@ remove_ruleset_by_name() {
 # Secret scanning + push protection
 # ----------------------------------------------------------------------------
 
+secret_scanning_available() {
+  local repo="$1" body
+  body="$(gh api "repos/${repo}" 2>/dev/null)" || return 1
+  # If the repo is public, secret scanning is always available.
+  if [ "$(printf '%s' "${body}" | jq -r '.private')" = "false" ]; then
+    return 0
+  fi
+  # Private repos: only available with GitHub Advanced Security
+  # (security_and_analysis surfaces as a non-null object in that case).
+  [ "$(printf '%s' "${body}" | jq -r '.security_and_analysis')" != "null" ]
+}
+
 configure_secret_scanning() {
   local repo="$1"
   log "Secret scanning + push protection (${repo})"
+  if ! secret_scanning_available "${repo}"; then
+    sub "WARNING: secret scanning is not available on this repository. GitHub"
+    sub "ships secret scanning for free on public repos and as part of GitHub"
+    sub "Advanced Security on private repos. ${repo} is private without GHAS,"
+    sub "so the secret-scanning backstop is not active. ANTHROPIC_API_KEY is"
+    sub "still redacted from workflow logs by GitHub Actions. Treat any commit"
+    sub "with secret-shaped content as needing manual review. See docs/SECURITY.md."
+    return 0
+  fi
   gh api --method PATCH "repos/${repo}" --input - >/dev/null <<'JSON'
 {
   "security_and_analysis": {
@@ -217,6 +256,40 @@ disable_secret_scanning() {
     "secret_scanning": { "status": "disabled" },
     "secret_scanning_push_protection": { "status": "disabled" }
   }
+}
+JSON
+  sub "disabled"
+}
+
+# ----------------------------------------------------------------------------
+# Allow GitHub Actions to create pull requests
+# ----------------------------------------------------------------------------
+#
+# By default, the auto-provisioned GITHUB_TOKEN cannot open or approve PRs.
+# The workflow's "Open or update PR" step needs this enabled. The setting maps
+# to the "Allow GitHub Actions to create and approve pull requests" toggle in
+# Settings → Actions → General. Note: this also allows Actions to *approve*
+# PRs, but the workflow's permissions block does not exercise that capability.
+
+configure_actions_pr_creation() {
+  local repo="$1"
+  log "Allow GitHub Actions to create pull requests (${repo})"
+  gh api --method PUT "repos/${repo}/actions/permissions/workflow" --input - >/dev/null <<'JSON'
+{
+  "default_workflow_permissions": "write",
+  "can_approve_pull_request_reviews": true
+}
+JSON
+  sub "enabled"
+}
+
+disable_actions_pr_creation() {
+  local repo="$1"
+  log "Disabling GitHub Actions PR creation (${repo})"
+  gh api --method PUT "repos/${repo}/actions/permissions/workflow" --input - >/dev/null <<'JSON'
+{
+  "default_workflow_permissions": "read",
+  "can_approve_pull_request_reviews": false
 }
 JSON
   sub "disabled"
@@ -288,6 +361,8 @@ snapshot_state() {
   fi
   echo "# security_and_analysis"
   gh api "repos/${repo}" --jq '.security_and_analysis' 2>/dev/null || true
+  echo "# actions workflow permissions"
+  gh api "repos/${repo}/actions/permissions/workflow" 2>/dev/null || true
 }
 
 run_idempotency_smoke_test() {
@@ -298,6 +373,7 @@ run_idempotency_smoke_test() {
   configure_branch_ruleset "${repo}"
   configure_push_ruleset "${repo}"
   configure_secret_scanning "${repo}"
+  configure_actions_pr_creation "${repo}"
   after="$(snapshot_state "${repo}")"
   if [ "${before}" = "${after}" ]; then
     sub "confirmed: configuration unchanged on re-apply"
@@ -337,6 +413,7 @@ install_remcc() {
   configure_branch_ruleset "${repo}"
   configure_push_ruleset "${repo}"
   configure_secret_scanning "${repo}"
+  configure_actions_pr_creation "${repo}"
   configure_anthropic_secret "${repo}"
   run_idempotency_smoke_test "${repo}"
 
@@ -353,6 +430,7 @@ uninstall_remcc() {
   remove_ruleset_by_name "${repo}" "${RULESET_PUSH_NAME}"
   remove_main_protection "${repo}"
   disable_secret_scanning "${repo}"
+  disable_actions_pr_creation "${repo}"
   remove_anthropic_secret "${repo}"
 
   log "Uninstall complete for ${repo}"

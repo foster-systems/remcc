@@ -276,13 +276,135 @@ Alternatives considered:
   By design. If the operator needs to rewrite history on a
   `change/**` branch, they delete the branch and recreate.
 
+## Dogfood findings (actr, 2026-05-10)
+
+The first end-to-end run on `~/ws/prv/actr` surfaced four GitHub-platform
+constraints that were not visible from the docs alone. Each materially
+changes the safety story for v1's actual adopter (a user-owned private
+repo) and is reflected below in updated decisions.
+
+### F1. Push rulesets are organization-only
+
+**Finding.** Calling `POST /repos/{owner}/{repo}/rulesets` with
+`target: push` against a user-owned repo returns 422 with
+`"Source only org-owned repos can have push rules"`. The feature is
+entirely unavailable on user-owned repos; an actor-pinned variant is
+not the question — the rule type cannot exist there.
+
+**Implication.** The `.github/**` push restriction is unenforceable
+on user-owned repos. The bot can edit files under `.github/**` within
+a `change/**` branch and push those edits to that branch. The only
+gate stopping such edits from reaching `main` is the operator's PR
+review (branch protection on `main` requires PR; the operator reads
+the diff before merging).
+
+**Resolution of the previously open question.** Push rulesets *do*
+support bypass actors on org-owned repos — actors include
+`RepositoryRole`, `Team`, and `Integration` (App). For an org adopter,
+the operator could either bypass admin (current design) or bypass
+admin + a specific Integration. Neither option exists on user-owned
+repos.
+
+### F2. Secret scanning + push protection require GHAS on private repos
+
+**Finding.** Calling
+`PATCH /repos/{owner}/{repo} {security_and_analysis: {...}}` on a
+private user-owned repo without GitHub Advanced Security returns 422
+with `"Secret scanning is not available for this repository"`. The
+feature is free on public repos and bundled into GHAS on org-owned
+private repos; private user-owned repos with no plan upgrade have no
+path to enable it.
+
+**Implication.** Accidental commits of `ANTHROPIC_API_KEY` (or other
+credentials) into the change branch are not blocked at push time on
+user-owned private adopters. The remaining backstop is GitHub
+Actions' built-in secret redaction in workflow logs — this catches
+leaks within workflow output but not commit content.
+
+### F3. GitHub Actions cannot create PRs by default
+
+**Finding.** A first-run workflow attempting `gh pr create`
+returns `pull request create failed: GraphQL: GitHub Actions is not
+permitted to create or approve pull requests`. The toggle at
+`Settings → Actions → General → Workflow permissions → "Allow GitHub
+Actions to create and approve pull requests"` defaults to off and
+must be flipped per-repo. API:
+`PUT /repos/{owner}/{repo}/actions/permissions/workflow` with
+`{ default_workflow_permissions: "write", can_approve_pull_request_reviews: true }`.
+
+**Implication.** `gh-bootstrap.sh` must enable this toggle as part
+of bootstrap; otherwise the workflow's PR-creation step always fails.
+This adds a sixth bootstrap call. The toggle is innocuous when
+combined with the workflow's `permissions:` block, which does not
+include `pull-requests: write` for review approval — so the
+"approve" capability is latent but never exercised.
+
+### F4. Two-layer rejection of bot push to main is verified
+
+**Finding.** A test workflow that runs `git push origin HEAD:main`
+with `GITHUB_TOKEN` is rejected by *both* layers simultaneously:
+
+```
+remote: error: GH013: Repository rule violations found for refs/heads/main.
+remote: - Changes must be made through a pull request.    ← branch protection
+remote: - Cannot update this protected ref.               ← branch ruleset
+ ! [remote rejected] HEAD -> main (push declined due to repository rule violations)
+```
+
+**Implication.** Defence in depth holds for the `change/**` branch
+namespace control, even on user-owned repos. The push to a non-`change`
+ref by a non-admin actor is rejected unconditionally.
+
+### F5. Admin push to main bypasses both controls (by design)
+
+**Finding.** Direct push of the operator's commit to `main` succeeds
+with audit-log message `remote: Bypassed rule violations for
+refs/heads/main` listing the same two rules.
+
+**Implication.** The model assumes admin-account hygiene (2FA,
+least-privilege). Anyone with admin on the target repo can push
+unreviewed commits to `main`. This is intentional — the operator is
+the gate the model trusts, and reflexive PR-only flows for the
+operator add ceremony without a corresponding safety gain on a
+single-operator project.
+
+## D12. v1 limitations on user-owned private repositories (added)
+
+For user-owned private repos like `actr`, the safety contract loses
+two of its outside-the-runner controls (F1, F2). The remaining
+controls are:
+
+| Control | Status on user-owned private repo |
+|---|---|
+| Workflow `permissions: contents/pull-requests: write` only | active |
+| Branch protection on `main` | active |
+| Branch ruleset confining bot to `change/**` | active |
+| Push ruleset blocking `.github/**` | unavailable (PR review substitutes) |
+| Secret scanning + push protection | unavailable (Actions log redaction substitutes) |
+| Trigger only on `change/**` and `workflow_dispatch` | active |
+
+The model still bounds the bot's blast radius to the `change/**`
+branch namespace (F4 verified). The operator's PR review on agent
+PRs is now the single gate against `.github/**` modifications and
+secret-shaped commit content. This is acceptable for v1's
+single-operator scope; an org adopter recovers the full model.
+
+`gh-bootstrap.sh` detects user-owned and private-without-GHAS
+contexts at runtime, prints loud warnings, and continues. SETUP.md
+and SECURITY.md document the substitution. SETUP.md offers no
+"upgrade your plan" prompt — the operator chooses the trade
+deliberately or moves to an org.
+
+## D13. Bootstrap enables Actions-creates-PRs (added)
+
+Per F3, `gh-bootstrap.sh` PUTs the workflow permissions endpoint to
+enable both `default_workflow_permissions: "write"` and
+`can_approve_pull_request_reviews: true`. The latter is required for
+the create-PR API; the workflow's `permissions:` block does not
+exercise the approve capability.
+
 ## Open Questions
 
-- Whether GitHub's push rulesets can pin path restrictions to a
-  specific token/actor (rather than all non-admins). Affects
-  whether the operator can still edit `.github/**` from main
-  while the bot is blocked.
-
-(Previously open: install command, apply commit behaviour, pnpm
-install + tsc — all resolved. See proposal "Resolved decisions"
-and design D9 / D11.)
+(All previously open questions are now resolved. See F1 for
+push-ruleset actor pinning, and proposal "Resolved decisions" plus
+D9 / D11 for earlier resolutions.)

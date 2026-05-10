@@ -47,9 +47,9 @@
 
 ## 6. Dogfood on actr
 
-- [ ] 6.1 Adopt remcc into `~/ws/prv/actr` by following `docs/SETUP.md` verbatim; record every deviation or missing step encountered, and fix the docs before continuing
-- [ ] 6.2 Run `gh-bootstrap.sh` against actr's GitHub repo; verify branch protection, push ruleset, secret scanning, and `ANTHROPIC_API_KEY` are all in place
-- [ ] 6.3 Push a trivial `change/test-apply` branch on actr and observe: workflow trigger, Claude Code run to completion, `openspec validate` pass, PR creation — without manual intervention
-- [ ] 6.4 Exercise the negative paths on actr: attempt `git push origin main` from local, observe rejection; modify the workflow to attempt a write under `.github/**` from a `change/**` branch, observe ruleset rejection; revert the test workflow afterward
-- [ ] 6.5 Resolve the remaining open question from `design.md` based on dogfood findings (whether GitHub push rulesets can pin path restrictions to a specific actor) and capture any newly surfaced unknowns; update `design.md` and the specs in this change accordingly
-- [ ] 6.6 Update `docs/SETUP.md`, `docs/SECURITY.md`, and `docs/COSTS.md` to reflect anything learned during dogfood; close the change only after a fresh read-through of SETUP.md still describes a workable adoption path
+- [x] 6.1 Adopt remcc into `~/ws/prv/actr` by following `docs/SETUP.md` verbatim; record every deviation or missing step encountered, and fix the docs before continuing
+- [x] 6.2 Run `gh-bootstrap.sh` against actr's GitHub repo; verify branch protection, push ruleset, secret scanning, and `ANTHROPIC_API_KEY` are all in place
+- [x] 6.3 Push a trivial `change/test-apply` branch on actr and observe: workflow trigger, Claude Code run to completion, `openspec validate` pass, PR creation — without manual intervention
+- [x] 6.4 Exercise the negative paths on actr: attempt `git push origin main` from local, observe rejection; modify the workflow to attempt a write under `.github/**` from a `change/**` branch, observe ruleset rejection; revert the test workflow afterward
+- [x] 6.5 Resolve the remaining open question from `design.md` based on dogfood findings (whether GitHub push rulesets can pin path restrictions to a specific actor) and capture any newly surfaced unknowns; update `design.md` and the specs in this change accordingly
+- [x] 6.6 Update `docs/SETUP.md`, `docs/SECURITY.md`, and `docs/COSTS.md` to reflect anything learned during dogfood; close the change only after a fresh read-through of SETUP.md still describes a workable adoption path
