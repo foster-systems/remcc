@@ -1,0 +1,85 @@
+# remcc security model
+
+remcc lets a Claude Code agent run unattended with full shell access
+on a per-change basis. The safety contract is two-layer: the inside
+of the runner is intentionally permissive, and the outside (GitHub)
+is intentionally tight. Each layer is independently load-bearing.
+Both must hold for the contract to hold.
+
+## Layer 1 — inside the runner
+
+Claude Code is invoked with `--dangerously-skip-permissions`. The
+agent has unrestricted shell access for the duration of the job. The
+runner itself is the deny list.
+
+### What this layer relies on
+
+| Control | What it stops |
+|---|---|
+| GitHub-hosted Ubuntu runner | The agent has no access to your laptop, your shared infrastructure, or any persistent state. |
+| Job-level isolation (one runner per job) | One run cannot pollute another. There is no caching of credentials or working directories between runs. |
+| `timeout-minutes: 180` on the apply job | Bounded wall-clock cost — a runaway agent is killed by GitHub. |
+| Anthropic admin-console budget cap | Bounded API cost across all runs. See `COSTS.md`. |
+| `ANTHROPIC_API_KEY` redaction in logs | GitHub redacts secrets stored in the repo's secret store from job logs and commit content the workflow produces. |
+
+### What this layer does NOT protect against
+
+- An adversary who can already inject content into the repository
+  (e.g. through a compromised dependency) before the workflow runs.
+- A compromise of the `claude-code` or `openspec` npm packages.
+  Mitigation is to track versions in the workflow and pay attention
+  to dogfood-run surprises.
+- Anthropic-side outages or behavioural drift in the apply skill.
+
+## Layer 2 — outside the runner
+
+This is the safety net. Even if the agent inside the runner does
+something unintended, the GitHub-side controls bound the blast radius.
+
+| Control | What it stops |
+|---|---|
+| Workflow `permissions:` limited to `contents: write, pull-requests: write` | The auto-provisioned `GITHUB_TOKEN` cannot read or write Actions secrets, packages, deployments, workflows, or repository administration. |
+| Branch protection on `main` (PR required, no force-push, no deletion) | The bot cannot push to or rewrite history on the production branch. |
+| Branch ruleset confining non-admin updates to `refs/heads/change/**` | The bot cannot create, update, delete, or non-fast-forward any branch outside `change/**`. The operator (admin) bypasses. |
+| Push ruleset blocking non-admin modifications to `.github/**` | **Load-bearing.** The bot cannot rewrite CI to widen its own permissions, change triggers, or delete protections. The operator (admin) bypasses. |
+| Secret scanning + secret push protection | A push containing a credential that matches a known pattern (including Anthropic API keys) is rejected at push time. Backstop against `ANTHROPIC_API_KEY` accidentally landing in a commit. |
+| Workflow trigger limited to `push: change/**` and `workflow_dispatch` | The agent only runs in a syntactically obvious branch namespace. Any push outside `change/**` does not trigger the agent. |
+
+### The `.github/**` push restriction is load-bearing
+
+If the agent could modify files under `.github/**`, every other
+control above would be reachable from inside a run:
+
+- It could change the workflow's `permissions:` block to grant more
+  scopes.
+- It could change the trigger pattern to broaden where it runs.
+- It could remove the timeout, the apply-skill invocation, or the
+  validation step.
+- It could edit the workflow to push to other branches under a
+  different actor identity (via PAT or App credentials checked in
+  to the repo as part of the change).
+
+The push ruleset blocking `.github/**` is therefore not a hardening
+control but a foundational one. If you ever find yourself disabling
+this ruleset, treat it as turning off the only thing keeping the
+agent from rewriting the rules of the game.
+
+The operator (admin) bypasses this rule and can edit `.github/**`
+through the normal PR flow. That asymmetry is the whole point.
+
+## What this model does NOT protect against
+
+- **Pre-existing repository vulnerabilities.** If the change the
+  operator wrote is malicious or wrong, the workflow will faithfully
+  apply it. Human PR review is the correctness gate.
+- **Anthropic API key exfiltration via api.anthropic.com.** The
+  agent has the key; api.anthropic.com is its destination anyway.
+  Cost cap and audit logs in the Anthropic admin console are the
+  defenses, not network controls.
+- **Adversarial bypass-actor configuration.** If an admin configures
+  additional bypass actors on the rulesets that include a service
+  account or app the agent can reach, the model breaks. Keep the
+  bypass list to repository-admin only.
+- **Insider risk from anyone with admin on the target repo.** Admin
+  bypasses every control. The model assumes a small operator set
+  whose accounts are otherwise hardened (2FA, least-privilege).

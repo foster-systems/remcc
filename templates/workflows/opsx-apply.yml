@@ -1,0 +1,228 @@
+name: opsx-apply
+
+on:
+  push:
+    branches:
+      - 'change/**'
+  workflow_dispatch:
+    inputs:
+      change_name:
+        description: 'Name of the OpenSpec change directory under openspec/changes/'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: opsx-apply-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Verify ANTHROPIC_API_KEY is set
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "::error::ANTHROPIC_API_KEY secret is not set on this repository. Add it via 'gh secret set ANTHROPIC_API_KEY' or run templates/gh-bootstrap.sh." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Resolve change name
+        id: change
+        env:
+          INPUT_CHANGE_NAME: ${{ inputs.change_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_CHANGE_NAME:-}" ]; then
+            name="${INPUT_CHANGE_NAME}"
+          else
+            case "${REF_NAME}" in
+              change/*)
+                name="${REF_NAME#change/}"
+                ;;
+              *)
+                echo "::error::Branch '${REF_NAME}' does not match 'change/**' and no change_name input was supplied." >&2
+                exit 1
+                ;;
+            esac
+          fi
+          if [ -z "${name}" ]; then
+            echo "::error::Resolved change name is empty." >&2
+            exit 1
+          fi
+          if [ ! -d "openspec/changes/${name}" ]; then
+            echo "::error::No directory found at openspec/changes/${name}/" >&2
+            exit 1
+          fi
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "branch=change/${name}" >> "$GITHUB_OUTPUT"
+
+      - name: Switch to change branch
+        env:
+          BRANCH: ${{ steps.change.outputs.branch }}
+        run: |
+          set -euo pipefail
+          if git show-ref --verify --quiet "refs/heads/${BRANCH}"; then
+            git checkout "${BRANCH}"
+          elif git show-ref --verify --quiet "refs/remotes/origin/${BRANCH}"; then
+            git checkout -B "${BRANCH}" "origin/${BRANCH}"
+          else
+            git checkout -B "${BRANCH}"
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Claude Code and OpenSpec CLIs
+        run: npm install -g @anthropic-ai/claude-code @fission-ai/openspec@latest
+
+      - name: Verify CLIs on PATH
+        run: |
+          claude --version
+          openspec --version
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure git identity
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Run /opsx:apply
+        id: apply
+        continue-on-error: true
+        env:
+          CHANGE_NAME: ${{ steps.change.outputs.name }}
+        run: |
+          set -o pipefail
+          claude --dangerously-skip-permissions -p "/opsx:apply ${CHANGE_NAME}" 2>&1 | tee apply.log
+          status="${PIPESTATUS[0]}"
+          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
+          exit "${status}"
+
+      - name: Run openspec validate
+        id: validate
+        continue-on-error: true
+        env:
+          CHANGE_NAME: ${{ steps.change.outputs.name }}
+        run: |
+          set -o pipefail
+          openspec validate "${CHANGE_NAME}" 2>&1 | tee validate.log
+          status="${PIPESTATUS[0]}"
+          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
+          exit "${status}"
+
+      - name: Stage and commit agent output
+        id: commit
+        env:
+          CHANGE_NAME: ${{ steps.change.outputs.name }}
+          APPLY_EXIT: ${{ steps.apply.outputs.exit_code }}
+          VALIDATE_EXIT: ${{ steps.validate.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No staged changes; skipping commit."
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "$(printf '/opsx:apply %s\n\napply exit: %s\nvalidate exit: %s\n' "${CHANGE_NAME}" "${APPLY_EXIT:-unknown}" "${VALIDATE_EXIT:-unknown}")"
+            echo "committed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push branch
+        id: push
+        env:
+          BRANCH: ${{ steps.change.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git fetch origin "${BRANCH}" || true
+          if git show-ref --verify --quiet "refs/remotes/origin/${BRANCH}"; then
+            ahead=$(git rev-list --count "origin/${BRANCH}..HEAD")
+          else
+            ahead=$(git rev-list --count HEAD)
+          fi
+          if [ "${ahead}" -gt 0 ]; then
+            git push origin "HEAD:refs/heads/${BRANCH}"
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Local branch is not ahead of origin; nothing to push."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update PR
+        if: always() && steps.change.outputs.name != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.change.outputs.branch }}
+          CHANGE_NAME: ${{ steps.change.outputs.name }}
+          APPLY_EXIT: ${{ steps.apply.outputs.exit_code }}
+          VALIDATE_EXIT: ${{ steps.validate.outputs.exit_code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git fetch origin main || true
+          if git show-ref --verify --quiet "refs/remotes/origin/${BRANCH}"; then
+            ahead_of_main=$(git rev-list --count "origin/main..origin/${BRANCH}" 2>/dev/null || echo 0)
+          else
+            ahead_of_main=0
+          fi
+          if [ "${ahead_of_main}" = "0" ]; then
+            echo "Branch ${BRANCH} has no commits ahead of main; skipping PR step."
+            exit 0
+          fi
+          body=$(cat <<EOF
+          Automated /opsx:apply run for change \`${CHANGE_NAME}\`.
+
+          - apply exit code: \`${APPLY_EXIT:-unknown}\`
+          - validate exit code: \`${VALIDATE_EXIT:-unknown}\`
+          - run: ${RUN_URL}
+
+          Logs are attached to the workflow run as artifact \`agent-logs-${CHANGE_NAME}\` (14 day retention).
+          EOF
+          )
+          existing=$(gh pr list --head "${BRANCH}" --base main --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -z "${existing}" ]; then
+            draft_flag=""
+            if [ "${APPLY_EXIT:-1}" != "0" ] || [ "${VALIDATE_EXIT:-1}" != "0" ]; then
+              draft_flag="--draft"
+            fi
+            # shellcheck disable=SC2086
+            gh pr create \
+              --base main \
+              --head "${BRANCH}" \
+              --title "/opsx:apply ${CHANGE_NAME}" \
+              --body "${body}" \
+              ${draft_flag}
+          else
+            gh pr comment "${existing}" --body "${body}"
+          fi
+
+      - name: Upload agent logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-logs-${{ steps.change.outputs.name || 'unresolved' }}
+          path: |
+            apply.log
+            validate.log
+          if-no-files-found: ignore
+          retention-days: 14
