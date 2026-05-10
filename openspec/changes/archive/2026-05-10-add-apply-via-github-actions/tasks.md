@@ -45,11 +45,11 @@
 - [x] 5.3 Write `docs/COSTS.md`: how to set Anthropic admin console budget caps, what to expect from GitHub Actions runner minutes, and how to read the artifact logs to reason about cost
 - [x] 5.4 Add a "Removing remcc" section to `docs/SETUP.md` covering workflow file deletion, ruleset removal, and secret deletion
 
-## 6. Dogfood on actr
+## 6. Dogfood on the first adopter
 
-- [x] 6.1 Adopt remcc into `~/ws/prv/actr` by following `docs/SETUP.md` verbatim; record every deviation or missing step encountered, and fix the docs before continuing
-- [x] 6.2 Run `gh-bootstrap.sh` against actr's GitHub repo; verify branch protection, push ruleset, secret scanning, and `ANTHROPIC_API_KEY` are all in place
-- [x] 6.3 Push a trivial `change/test-apply` branch on actr and observe: workflow trigger, Claude Code run to completion, `openspec validate` pass, PR creation — without manual intervention
-- [x] 6.4 Exercise the negative paths on actr: attempt `git push origin main` from local, observe rejection; modify the workflow to attempt a write under `.github/**` from a `change/**` branch, observe ruleset rejection; revert the test workflow afterward
+- [x] 6.1 Adopt remcc into the first-adopter repo by following `docs/SETUP.md` verbatim; record every deviation or missing step encountered, and fix the docs before continuing
+- [x] 6.2 Run `gh-bootstrap.sh` against the adopter's GitHub repo; verify branch protection, push ruleset, secret scanning, and `ANTHROPIC_API_KEY` are all in place
+- [x] 6.3 Push a trivial `change/test-apply` branch on the adopter and observe: workflow trigger, Claude Code run to completion, `openspec validate` pass, PR creation — without manual intervention
+- [x] 6.4 Exercise the negative paths on the adopter: attempt `git push origin main` from local, observe rejection; modify the workflow to attempt a write under `.github/**` from a `change/**` branch, observe ruleset rejection; revert the test workflow afterward
 - [x] 6.5 Resolve the remaining open question from `design.md` based on dogfood findings (whether GitHub push rulesets can pin path restrictions to a specific actor) and capture any newly surfaced unknowns; update `design.md` and the specs in this change accordingly
 - [x] 6.6 Update `docs/SETUP.md`, `docs/SECURITY.md`, and `docs/COSTS.md` to reflect anything learned during dogfood; close the change only after a fresh read-through of SETUP.md still describes a workable adoption path

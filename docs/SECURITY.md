@@ -39,8 +39,8 @@ something unintended, the GitHub-side controls bound the blast radius.
 | Control | What it stops | Availability |
 |---|---|---|
 | Workflow `permissions:` limited to `contents: write, pull-requests: write` | The auto-provisioned `GITHUB_TOKEN` cannot read or write Actions secrets, packages, deployments, workflows, or repository administration. | Always |
-| Branch protection on `main` (PR required, no force-push, no deletion) | The bot cannot push to or rewrite history on the production branch. **Verified by negative test on actr 2026-05-10:** `git push origin HEAD:main` from inside the runner returns `remote rejected … push declined due to repository rule violations`. | Always |
-| Branch ruleset confining non-admin updates to `refs/heads/change/**` | The bot cannot create, update, delete, or non-fast-forward any branch outside `change/**`. The operator (admin) bypasses. **Verified together with branch protection on actr.** | Always |
+| Branch protection on `main` (PR required, no force-push, no deletion) | The bot cannot push to or rewrite history on the production branch. **Verified by negative test on the dogfood adopter 2026-05-10:** `git push origin HEAD:main` from inside the runner returns `remote rejected … push declined due to repository rule violations`. | Always |
+| Branch ruleset confining non-admin updates to `refs/heads/change/**` | The bot cannot create, update, delete, or non-fast-forward any branch outside `change/**`. The operator (admin) bypasses. **Verified together with branch protection on the dogfood adopter.** | Always |
 | Push ruleset blocking non-admin modifications to `.github/**` | **Load-bearing where available.** The bot cannot rewrite CI to widen its own permissions, change triggers, or delete protections. The operator (admin) bypasses. | **Org-owned repos only.** Unavailable on user-owned repos (see Limitations below). |
 | Secret scanning + secret push protection | A push containing a credential that matches a known pattern (including Anthropic API keys) is rejected at push time. Backstop against `ANTHROPIC_API_KEY` accidentally landing in a commit. | Public repos free; private repos require GHAS. |
 | GitHub Actions log redaction of `${{ secrets.* }}` values | Secrets stored in the repo's secret store are redacted from job logs and step outputs. Does not catch secret-shaped content in *commits*. | Always |
@@ -51,7 +51,7 @@ something unintended, the GitHub-side controls bound the blast radius.
 
 Two of the Layer 2 controls in the table above are not universally
 available. The `add-apply-via-github-actions` dogfood on a private
-user-owned target (`premeq/actr`, 2026-05-10) surfaced both:
+user-owned target (2026-05-10) surfaced both:
 
 - **Push rulesets are an organization-level GitHub feature.** GitHub
   rejects `POST /repos/.../rulesets` with `target: push` on

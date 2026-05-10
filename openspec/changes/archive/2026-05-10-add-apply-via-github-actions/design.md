@@ -6,11 +6,11 @@ both the artifact pattern (templates, docs, bootstrap script) and the
 workflow contract (what runs where, what's safe, what isn't) in a
 form that downstream repos can adopt by copy-paste.
 
-The first concrete adopter is `~/ws/prv/actr` — a pnpm-workspace
-monorepo with NestJS + NextJS apps. actr already has `.claude/` and
+The first concrete adopter is a local pnpm-workspace
+monorepo with NestJS + NextJS apps. The adopter already has `.claude/` and
 `openspec/` in place, so adoption mostly means landing the workflow
 file and configuring GitHub. This grounds the design: assumptions
-that don't hold for actr should be revisited before they become spec.
+that don't hold for the adopter should be revisited before they become spec.
 
 The user authors OpenSpec changes locally on macOS but does not want
 to run /opsx:apply locally — too much shared state and credential
@@ -267,7 +267,7 @@ Alternatives considered:
   `@anthropic-ai/claude-code` and `@fission-ai/openspec` versions
   in the install step and watching dogfood runs for surprises.
 
-- **Single point of adopter (actr)** → Validation rests on one
+- **Single point of adopter** → Validation rests on one
   project's shape. The "second adoption succeeds from SETUP.md
   alone" criterion mitigates this in principle but cannot be
   exercised until a second project arrives.
@@ -276,9 +276,9 @@ Alternatives considered:
   By design. If the operator needs to rewrite history on a
   `change/**` branch, they delete the branch and recreate.
 
-## Dogfood findings (actr, 2026-05-10)
+## Dogfood findings (2026-05-10)
 
-The first end-to-end run on `~/ws/prv/actr` surfaced four GitHub-platform
+The first end-to-end run on the dogfood adopter surfaced four GitHub-platform
 constraints that were not visible from the docs alone. Each materially
 changes the safety story for v1's actual adopter (a user-owned private
 repo) and is reflected below in updated decisions.
@@ -370,7 +370,7 @@ single-operator project.
 
 ## D12. v1 limitations on user-owned private repositories (added)
 
-For user-owned private repos like `actr`, the safety contract loses
+For user-owned private repos like the dogfood adopter, the safety contract loses
 two of its outside-the-runner controls (F1, F2). The remaining
 controls are:
 

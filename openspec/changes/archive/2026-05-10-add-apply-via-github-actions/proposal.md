@@ -34,9 +34,9 @@ A docs-and-templates repo containing:
 - Setup, security, and cost docs sufficient for a careful operator
   to adopt remcc into a fresh repo without external context.
 
-First adopter: `~/ws/prv/actr` (pnpm workspace, NestJS + NextJS).
+First adopter: a local pnpm workspace (NestJS + NextJS).
 remcc is considered v1 once an end-to-end change runs successfully
-on actr.
+on the first adopter.
 
 v1 explicitly supports pnpm-managed adopters only. The workflow
 runs `pnpm install --frozen-lockfile` against the target repo.
@@ -51,7 +51,7 @@ In scope
 - `.claude/settings.json` template (minimal, runner-safe)
 - `gh-bootstrap.sh` for one-time per-repo GitHub configuration
 - SETUP.md, SECURITY.md, COSTS.md
-- Dogfood validation against actr
+- Dogfood validation against the first adopter
 
 Out of scope (deferred or rejected)
 - CLI scaffolder (npx / brew / shell installer)
@@ -140,7 +140,7 @@ Adoption flow (to be specified in `repo-adoption` spec):
 
 ## Validation
 
-- A trivial change applied end-to-end on actr produces a reviewable PR
+- A trivial change applied end-to-end on the first adopter produces a reviewable PR
   whose contents match the change's tasks.md.
 - Branch protection prevents the bot's GITHUB_TOKEN from pushing to
   main even when explicitly attempted in a test workflow.

@@ -28,9 +28,9 @@
 - [x] 4.2 Update `docs/COSTS.md` with guidance on choosing model and effort for cost/quality trade-offs and note that the resolved values appear in the PR body for after-the-fact auditing
 - [x] 4.3 Note in SETUP.md that repository variables are not exposed to forked-PR runs and that the trigger surface (push to `change/**` and `workflow_dispatch`) makes this a non-issue in practice
 
-## 5. Dogfood on actr
+## 5. Dogfood on the first adopter
 
-- [x] 5.1 Re-copy the updated workflow into `~/ws/prv/actr/.github/workflows/opsx-apply.yml` and re-run `gh-bootstrap.sh` to install the new variables (try both setting and skipping each knob)
+- [x] 5.1 Re-copy the updated workflow into the adopter's `.github/workflows/opsx-apply.yml` and re-run `gh-bootstrap.sh` to install the new variables (try both setting and skipping each knob)
 - [ ] 5.2 Trigger a push-based run with no overrides and verify the PR body reports `sonnet` / `high` (or whatever the resolved values are) and the run completes
 - [ ] 5.3 Trigger a push-based run with `Opsx-Model: opus` in the commit trailer and verify the PR-comment reports the override; trigger another with `Opsx-Effort: low` and verify
 - [ ] 5.4 Trigger a manual `workflow_dispatch` with explicit `model` and `effort` inputs and verify the dispatch values win over both the trailer and the variables
