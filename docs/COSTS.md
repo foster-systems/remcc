@@ -57,6 +57,37 @@ A per-run hard kill switch is intentionally not part of v1. Add one
 only if real usage shows that the budget cap and 180-minute timeout
 together are insufficient.
 
+### Choosing model and effort
+
+Each `/opsx:apply` run passes an explicit `--model` and an
+`--effort` (Claude Code's thinking-budget level) to the agent.
+Both are knobs you can turn for cost vs. quality.
+
+- **Model.** `haiku` is the cheapest, `sonnet` is the workflow's
+  default, `opus` is the most expensive. As a rule of thumb,
+  prefer `sonnet` for routine changes and reach for `opus` only
+  on large, architectural, or otherwise gnarly work where the
+  cost is justified by the quality lift.
+- **Effort.** `low` < `medium` < `high` thinking budget. Higher
+  effort lets the agent reason more before acting, which usually
+  improves quality on hard changes but also costs more tokens.
+  `high` is the default and is usually right for non-trivial
+  OpenSpec changes; drop to `medium` or `low` for small,
+  well-specified work where extra reasoning is dead weight.
+
+The two knobs compose: `sonnet` + `low` is the cheapest reasonable
+configuration; `opus` + `high` is the most expensive. Most repos
+land on `sonnet` + `high` as the default and override per change
+only when the change is small enough to warrant `low`, or hard
+enough to warrant `opus`.
+
+The resolved `model` and `effort` (and the source each came from)
+appear in the body of every PR the workflow opens, and in the
+comment it leaves on re-runs of an existing PR. Use those values
+to audit cost decisions after the fact rather than guessing from
+the change name. See `docs/SETUP.md` for the override mechanics
+(repository variables, commit trailers, manual dispatch).
+
 ## GitHub Actions runner minutes
 
 Each `/opsx:apply` run consumes GitHub-hosted Ubuntu runner minutes

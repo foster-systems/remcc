@@ -164,7 +164,14 @@ The script:
 7. Prompts for `ANTHROPIC_API_KEY` (input hidden) and uploads it as
    the repository secret. If the variable is already set in your
    shell, the script picks it up and does not prompt.
-8. Runs an idempotency smoke test: re-applies every change and
+8. Prompts for `OPSX_APPLY_MODEL` and `OPSX_APPLY_EFFORT` — the
+   per-repo defaults for the `/opsx:apply` step. Empty input
+   leaves the variable unset, in which case the workflow's
+   baked-in defaults (`sonnet` / `high`) apply. The script reads
+   `OPSX_APPLY_MODEL` / `OPSX_APPLY_EFFORT` from the environment
+   if set, so the prompts can be skipped in scripted runs. See
+   "Configuring the apply model" below for what these knobs do.
+9. Runs an idempotency smoke test: re-applies every change and
    diffs the resulting state. A diff is a bug — please report it.
 
 Re-running the script later is a no-op.
@@ -186,6 +193,94 @@ Re-running the script later is a no-op.
 - **422 errors not handled by the script's warnings**: GitHub
   occasionally adds new constraints. Capture the full error and
   open an issue on the remcc repo before working around it locally.
+
+## Configuring the apply model
+
+The `/opsx:apply` step is invoked with an explicit `--model` and
+`--effort` (Claude Code's thinking-budget level). Both are
+configurable per repo and per run.
+
+### Repository-variable defaults
+
+| Variable | Purpose | Accepted values | Default if unset |
+|---|---|---|---|
+| `OPSX_APPLY_MODEL` | Claude model alias passed to `claude --model` | `opus`, `sonnet`, `haiku`, or any full model id the CLI accepts | `sonnet` |
+| `OPSX_APPLY_EFFORT` | Claude Code thinking-budget level | `low`, `medium`, `high` | `high` |
+
+`gh-bootstrap.sh` prompts for these during install. To change them
+later without re-running the script:
+
+```sh
+gh variable set OPSX_APPLY_MODEL --body opus
+gh variable set OPSX_APPLY_EFFORT --body medium
+```
+
+To revert to the baked-in default, delete the variable:
+
+```sh
+gh variable delete OPSX_APPLY_MODEL
+```
+
+The two variables resolve independently — leaving `OPSX_APPLY_EFFORT`
+unset while setting `OPSX_APPLY_MODEL` is fine.
+
+### Per-run override precedence
+
+The workflow resolves `model` and `effort` independently for every
+run with this precedence (highest first):
+
+1. `workflow_dispatch` input (when non-empty)
+2. Commit trailer on the head commit (`Opsx-Model:` / `Opsx-Effort:`)
+3. Repository variable (`OPSX_APPLY_MODEL` / `OPSX_APPLY_EFFORT`)
+4. Baked-in default (`sonnet` for model, `high` for effort)
+
+#### Commit-trailer override
+
+For a push-triggered run, add a trailer to the head commit on the
+change branch:
+
+```text
+Refactor auth middleware
+
+Opsx-Model: opus
+Opsx-Effort: medium
+```
+
+Trailer parsing uses `git interpret-trailers`, so standard Git
+trailer rules apply: a blank line before the trailer block,
+`Token: value` per line, token matching is case-insensitive.
+
+#### Manual-dispatch override
+
+Trigger the workflow manually with `gh workflow run` (or from the
+Actions tab) and supply the inputs explicitly:
+
+```sh
+gh workflow run opsx-apply.yml \
+  --ref change/refactor-auth \
+  -f change_name=refactor-auth \
+  -f model=opus \
+  -f effort=low
+```
+
+Empty input means "no override" — leave a field blank to fall
+through to the trailer / repo variable / baked default.
+
+### Resolved values are reported in the PR
+
+The workflow records the resolved `model` and `effort` (and the
+source each came from) in the body of any PR it opens and in any
+comment it posts on a re-run. That PR body is the source of truth
+for "what did this run actually use?" — there is no need to dig
+through the Actions logs.
+
+### Forked PRs
+
+Repository variables are not exposed to workflow runs originating
+from forked PRs. The `opsx-apply` workflow only triggers on `push`
+to `change/**` and on `workflow_dispatch`, both of which are
+privileged events on the main repo, so the fork-PR exposure path
+does not apply to remcc in practice.
 
 ## Runner profile
 

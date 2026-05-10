@@ -10,6 +10,14 @@ on:
         description: "Name of the OpenSpec change directory under openspec/changes/"
         required: true
         type: string
+      model:
+        description: "Claude model override for this run (e.g. opus, sonnet, haiku). Leave empty to fall back to commit trailer, repository variable, or baked-in default."
+        required: false
+        type: string
+      effort:
+        description: "Claude effort/thinking-budget override for this run (low | medium | high). Leave empty to fall back to commit trailer, repository variable, or baked-in default."
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -83,6 +91,68 @@ jobs:
             git checkout -B "${BRANCH}"
           fi
 
+      - name: Resolve apply config
+        id: config
+        env:
+          INPUT_MODEL: ${{ inputs.model }}
+          INPUT_EFFORT: ${{ inputs.effort }}
+          VAR_MODEL: ${{ vars.OPSX_APPLY_MODEL }}
+          VAR_EFFORT: ${{ vars.OPSX_APPLY_EFFORT }}
+        run: |
+          set -euo pipefail
+          DEFAULT_MODEL="sonnet"
+          DEFAULT_EFFORT="high"
+
+          trailers="$(git log -1 --pretty=%B | git interpret-trailers --parse --unfold)"
+          trailer_model="$(printf '%s\n' "${trailers}" \
+            | awk -F': ' 'BEGIN{IGNORECASE=1} tolower($1)=="opsx-model"{sub(/^[^:]*:[ ]*/, ""); print; exit}')"
+          trailer_effort="$(printf '%s\n' "${trailers}" \
+            | awk -F': ' 'BEGIN{IGNORECASE=1} tolower($1)=="opsx-effort"{sub(/^[^:]*:[ ]*/, ""); print; exit}')"
+
+          if [ -n "${INPUT_MODEL:-}" ]; then
+            model="${INPUT_MODEL}"
+            model_source="workflow_dispatch input"
+          elif [ -n "${trailer_model:-}" ]; then
+            model="${trailer_model}"
+            model_source="commit trailer Opsx-Model"
+          elif [ -n "${VAR_MODEL:-}" ]; then
+            model="${VAR_MODEL}"
+            model_source="repository variable OPSX_APPLY_MODEL"
+          else
+            model="${DEFAULT_MODEL}"
+            model_source="baked-in default"
+          fi
+
+          if [ -n "${INPUT_EFFORT:-}" ]; then
+            effort="${INPUT_EFFORT}"
+            effort_source="workflow_dispatch input"
+          elif [ -n "${trailer_effort:-}" ]; then
+            effort="${trailer_effort}"
+            effort_source="commit trailer Opsx-Effort"
+          elif [ -n "${VAR_EFFORT:-}" ]; then
+            effort="${VAR_EFFORT}"
+            effort_source="repository variable OPSX_APPLY_EFFORT"
+          else
+            effort="${DEFAULT_EFFORT}"
+            effort_source="baked-in default"
+          fi
+
+          case "${effort}" in
+            low|medium|high) ;;
+            *)
+              echo "::error::Invalid effort value '${effort}' (source: ${effort_source}). Must be one of: low, medium, high." >&2
+              exit 1
+              ;;
+          esac
+
+          echo "model=${model}" >> "$GITHUB_OUTPUT"
+          echo "effort=${effort}" >> "$GITHUB_OUTPUT"
+          echo "model_source=${model_source}" >> "$GITHUB_OUTPUT"
+          echo "effort_source=${effort_source}" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved model: ${model} (source: ${model_source})"
+          echo "Resolved effort: ${effort} (source: ${effort_source})"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -112,9 +182,26 @@ jobs:
         continue-on-error: true
         env:
           CHANGE_NAME: ${{ steps.change.outputs.name }}
+          MODEL: ${{ steps.config.outputs.model }}
+          EFFORT: ${{ steps.config.outputs.effort }}
+          MODEL_SOURCE: ${{ steps.config.outputs.model_source }}
+          EFFORT_SOURCE: ${{ steps.config.outputs.effort_source }}
         run: |
           set -o pipefail
-          claude --dangerously-skip-permissions -p "/opsx:apply ${CHANGE_NAME}" 2>&1 | tee apply.log
+          {
+            printf 'model: %s (source: %s)\n' "${MODEL}" "${MODEL_SOURCE}"
+            printf 'effort: %s (source: %s)\n' "${EFFORT}" "${EFFORT_SOURCE}"
+            printf -- '---\n'
+          } > apply.log
+          case "${EFFORT}" in
+            low)    effort_flag="--effort"; effort_value="low" ;;
+            medium) effort_flag="--effort"; effort_value="medium" ;;
+            high)   effort_flag="--effort"; effort_value="high" ;;
+          esac
+          claude --dangerously-skip-permissions \
+            --model "${MODEL}" \
+            "${effort_flag}" "${effort_value}" \
+            -p "/opsx:apply ${CHANGE_NAME}" 2>&1 | tee -a apply.log
           status="${PIPESTATUS[0]}"
           echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
           exit "${status}"
@@ -176,6 +263,10 @@ jobs:
           CHANGE_NAME: ${{ steps.change.outputs.name }}
           APPLY_EXIT: ${{ steps.apply.outputs.exit_code }}
           VALIDATE_EXIT: ${{ steps.validate.outputs.exit_code }}
+          MODEL: ${{ steps.config.outputs.model }}
+          EFFORT: ${{ steps.config.outputs.effort }}
+          MODEL_SOURCE: ${{ steps.config.outputs.model_source }}
+          EFFORT_SOURCE: ${{ steps.config.outputs.effort_source }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -192,6 +283,8 @@ jobs:
           body=$(cat <<EOF
           Automated /opsx:apply run for change \`${CHANGE_NAME}\`.
 
+          - model: \`${MODEL:-unknown}\` (source: ${MODEL_SOURCE:-unknown})
+          - effort: \`${EFFORT:-unknown}\` (source: ${EFFORT_SOURCE:-unknown})
           - apply exit code: \`${APPLY_EXIT:-unknown}\`
           - validate exit code: \`${VALIDATE_EXIT:-unknown}\`
           - run: ${RUN_URL}

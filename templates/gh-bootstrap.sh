@@ -16,6 +16,11 @@
 #     bot is therefore unable to rewrite CI; the operator (admin) bypasses.
 #   - Secret scanning + secret push protection on the repository.
 #   - The repository secret ANTHROPIC_API_KEY (prompted or read from env).
+#   - The repository variables OPSX_APPLY_MODEL and OPSX_APPLY_EFFORT, which
+#     set per-repo defaults for the /opsx:apply step. Each is prompted or
+#     read from an env var of the same name; empty input leaves the variable
+#     unset, in which case the workflow's baked-in defaults (sonnet/high)
+#     apply.
 #
 # Prerequisites:
 #   - `gh` (GitHub CLI) authenticated as an account with admin on the target.
@@ -339,11 +344,89 @@ remove_anthropic_secret() {
 }
 
 # ----------------------------------------------------------------------------
+# Apply configuration variables: OPSX_APPLY_MODEL / OPSX_APPLY_EFFORT
+# ----------------------------------------------------------------------------
+
+read_apply_config_into_env() {
+  if [ -z "${OPSX_APPLY_MODEL+x}" ]; then
+    if [ -t 0 ]; then
+      printf 'OPSX_APPLY_MODEL (Claude model for /opsx:apply, e.g. opus, sonnet, haiku; empty to skip): ' >&2
+      IFS= read -r OPSX_APPLY_MODEL || OPSX_APPLY_MODEL=""
+    else
+      OPSX_APPLY_MODEL=""
+    fi
+    export OPSX_APPLY_MODEL
+  fi
+
+  if [ -z "${OPSX_APPLY_EFFORT+x}" ]; then
+    if [ -t 0 ]; then
+      printf 'OPSX_APPLY_EFFORT (low|medium|high; empty to skip): ' >&2
+      IFS= read -r OPSX_APPLY_EFFORT || OPSX_APPLY_EFFORT=""
+    else
+      OPSX_APPLY_EFFORT=""
+    fi
+    export OPSX_APPLY_EFFORT
+  fi
+
+  if [ -n "${OPSX_APPLY_EFFORT:-}" ]; then
+    case "${OPSX_APPLY_EFFORT}" in
+      low|medium|high) ;;
+      *) err "OPSX_APPLY_EFFORT must be one of: low, medium, high (got '${OPSX_APPLY_EFFORT}')" ;;
+    esac
+  fi
+}
+
+get_repo_variable_value() {
+  local repo="$1" name="$2"
+  gh api "repos/${repo}/actions/variables/${name}" --jq '.value' 2>/dev/null || true
+}
+
+set_repo_variable() {
+  local repo="$1" name="$2" value="$3" current
+  current="$(get_repo_variable_value "${repo}" "${name}")"
+  if [ "${current}" = "${value}" ]; then
+    sub "${name} unchanged (= ${value})"
+    return 0
+  fi
+  gh variable set "${name}" --repo "${repo}" --body "${value}" >/dev/null
+  sub "${name} set to ${value}"
+}
+
+configure_apply_config_variables() {
+  local repo="$1"
+  log "Apply configuration variables (${repo})"
+  read_apply_config_into_env
+  if [ -n "${OPSX_APPLY_MODEL:-}" ]; then
+    set_repo_variable "${repo}" OPSX_APPLY_MODEL "${OPSX_APPLY_MODEL}"
+  else
+    sub "OPSX_APPLY_MODEL not provided; workflow will use its baked-in default (sonnet)"
+  fi
+  if [ -n "${OPSX_APPLY_EFFORT:-}" ]; then
+    set_repo_variable "${repo}" OPSX_APPLY_EFFORT "${OPSX_APPLY_EFFORT}"
+  else
+    sub "OPSX_APPLY_EFFORT not provided; workflow will use its baked-in default (high)"
+  fi
+}
+
+remove_apply_config_variables() {
+  local repo="$1" name
+  log "Removing apply configuration variables (${repo})"
+  for name in OPSX_APPLY_MODEL OPSX_APPLY_EFFORT; do
+    if gh api "repos/${repo}/actions/variables/${name}" --silent >/dev/null 2>&1; then
+      gh variable delete "${name}" --repo "${repo}" >/dev/null
+      sub "${name} removed"
+    else
+      sub "${name} already absent"
+    fi
+  done
+}
+
+# ----------------------------------------------------------------------------
 # Idempotency smoke test
 # ----------------------------------------------------------------------------
 
 snapshot_state() {
-  local repo="$1" bid pid
+  local repo="$1" bid pid name
   echo "# branch protection on main"
   gh api "repos/${repo}/branches/main/protection" 2>/dev/null \
     | jq 'del(.url, .self_link, .urls)' || true
@@ -363,6 +446,15 @@ snapshot_state() {
   gh api "repos/${repo}" --jq '.security_and_analysis' 2>/dev/null || true
   echo "# actions workflow permissions"
   gh api "repos/${repo}/actions/permissions/workflow" 2>/dev/null || true
+  echo "# apply configuration variables"
+  for name in OPSX_APPLY_MODEL OPSX_APPLY_EFFORT; do
+    if gh api "repos/${repo}/actions/variables/${name}" --silent >/dev/null 2>&1; then
+      gh api "repos/${repo}/actions/variables/${name}" \
+        | jq '{name, value}' || true
+    else
+      echo "{\"name\":\"${name}\",\"value\":null}"
+    fi
+  done
 }
 
 run_idempotency_smoke_test() {
@@ -374,6 +466,7 @@ run_idempotency_smoke_test() {
   configure_push_ruleset "${repo}"
   configure_secret_scanning "${repo}"
   configure_actions_pr_creation "${repo}"
+  configure_apply_config_variables "${repo}"
   after="$(snapshot_state "${repo}")"
   if [ "${before}" = "${after}" ]; then
     sub "confirmed: configuration unchanged on re-apply"
@@ -415,6 +508,7 @@ install_remcc() {
   configure_secret_scanning "${repo}"
   configure_actions_pr_creation "${repo}"
   configure_anthropic_secret "${repo}"
+  configure_apply_config_variables "${repo}"
   run_idempotency_smoke_test "${repo}"
 
   log "Bootstrap complete for ${repo}"
@@ -432,6 +526,7 @@ uninstall_remcc() {
   disable_secret_scanning "${repo}"
   disable_actions_pr_creation "${repo}"
   remove_anthropic_secret "${repo}"
+  remove_apply_config_variables "${repo}"
 
   log "Uninstall complete for ${repo}"
 }
