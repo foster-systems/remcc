@@ -198,10 +198,29 @@ jobs:
             medium) effort_flag="--effort"; effort_value="medium" ;;
             high)   effort_flag="--effort"; effort_value="high" ;;
           esac
+          # Stream NDJSON to apply.jsonl (full raw audit trail), and a
+          # human-readable distillation to apply.log + the Actions console
+          # so you can watch the agent think live.
           claude --dangerously-skip-permissions \
             --model "${MODEL}" \
             "${effort_flag}" "${effort_value}" \
-            -p "/opsx:apply ${CHANGE_NAME}" 2>&1 | tee -a apply.log
+            --output-format stream-json --verbose \
+            -p "/opsx:apply ${CHANGE_NAME}" 2>&1 \
+            | tee -a apply.jsonl \
+            | jq -r '
+                if .type == "system" and .subtype == "init" then
+                  "[init] model=\(.model // "?") cwd=\(.cwd // "?")"
+                elif .type == "assistant" then
+                  (.message.content // []) | map(
+                    if .type == "text" then .text
+                    elif .type == "tool_use" then "→ \(.name)"
+                    else empty end
+                  ) | join("\n")
+                elif .type == "result" then
+                  "[done] subtype=\(.subtype // "?") cost_usd=\(.total_cost_usd // .cost_usd // 0)"
+                else empty end
+              ' \
+            | tee -a apply.log
           status="${PIPESTATUS[0]}"
           echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
           exit "${status}"
@@ -316,6 +335,7 @@ jobs:
           name: agent-logs-${{ steps.change.outputs.name || 'unresolved' }}
           path: |
             apply.log
+            apply.jsonl
             validate.log
           if-no-files-found: ignore
           retention-days: 14
