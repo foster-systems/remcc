@@ -221,12 +221,26 @@ jobs:
             -p "/opsx:apply ${CHANGE_NAME}" 2>&1 \
             | tee -a apply.jsonl \
             | jq --unbuffered -r '
+                def tool_summary:
+                  . as $tu | ($tu.input // {}) as $i |
+                  if   $tu.name == "Bash"      then "→ Bash $ \(($i.command // "?") | gsub("\n"; " ↵ "))"
+                  elif $tu.name == "Read"      then "→ Read \($i.file_path // "?")"
+                  elif $tu.name == "Edit"      then "→ Edit \($i.file_path // "?")"
+                  elif $tu.name == "MultiEdit" then "→ MultiEdit \($i.file_path // "?") (\(($i.edits // []) | length) edits)"
+                  elif $tu.name == "Write"     then "→ Write \($i.file_path // "?")"
+                  elif $tu.name == "Grep"      then "→ Grep \"\($i.pattern // "?")\"\(if $i.path then " in \($i.path)" else "" end)"
+                  elif $tu.name == "Glob"      then "→ Glob \($i.pattern // "?")"
+                  elif $tu.name == "WebFetch"  then "→ WebFetch \($i.url // "?")"
+                  elif $tu.name == "WebSearch" then "→ WebSearch \"\($i.query // "?")\""
+                  elif $tu.name == "Task"      then "→ Task[\($i.subagent_type // "general")] \($i.description // "?")"
+                  elif $tu.name == "TodoWrite" then "→ TodoWrite (\(($i.todos // []) | length) items)"
+                  else "→ \($tu.name) \(($i | tostring)[0:200])" end;
                 if .type == "system" and .subtype == "init" then
                   "[init] model=\(.model // "?") cwd=\(.cwd // "?")"
                 elif .type == "assistant" then
                   (.message.content // []) | map(
                     if .type == "text" then .text
-                    elif .type == "tool_use" then "→ \(.name)"
+                    elif .type == "tool_use" then tool_summary
                     else empty end
                   ) | join("\n")
                 elif .type == "result" then
