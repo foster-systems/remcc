@@ -29,6 +29,9 @@ concurrency:
 
 jobs:
   apply:
+    # Skip runs whose head commit was authored by the bot — its own pushes
+    # (via WORKFLOW_PAT) would otherwise re-trigger this workflow indefinitely.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.head_commit.author.name != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
@@ -41,11 +44,21 @@ jobs:
             exit 1
           fi
 
+      - name: Verify WORKFLOW_PAT is set
+        env:
+          WORKFLOW_PAT: ${{ secrets.WORKFLOW_PAT }}
+        run: |
+          if [ -z "${WORKFLOW_PAT}" ]; then
+            echo "::error::WORKFLOW_PAT secret is not set. The default GITHUB_TOKEN cannot push changes under .github/workflows/, so the agent needs a PAT with 'Contents: write' + 'Workflows: write' on this repo. Create one and add it via 'gh secret set WORKFLOW_PAT'." >&2
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ github.ref }}
+          token: ${{ secrets.WORKFLOW_PAT }}
 
       - name: Resolve change name
         id: change
@@ -246,6 +259,9 @@ jobs:
         run: |
           set -euo pipefail
           git add -A
+          # Runner-local logs are already uploaded as the agent-logs artifact;
+          # keep them out of git history.
+          git reset -- apply.jsonl apply.log validate.log 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No staged changes; skipping commit."
             echo "committed=false" >> "$GITHUB_OUTPUT"
