@@ -207,7 +207,7 @@ jobs:
             --output-format stream-json --verbose \
             -p "/opsx:apply ${CHANGE_NAME}" 2>&1 \
             | tee -a apply.jsonl \
-            | jq -r '
+            | jq --unbuffered -r '
                 if .type == "system" and .subtype == "init" then
                   "[init] model=\(.model // "?") cwd=\(.cwd // "?")"
                 elif .type == "assistant" then
