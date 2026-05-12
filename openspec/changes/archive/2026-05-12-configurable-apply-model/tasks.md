@@ -31,8 +31,8 @@
 ## 5. Dogfood on the first adopter
 
 - [x] 5.1 Re-copy the updated workflow into the adopter's `.github/workflows/opsx-apply.yml` and re-run `gh-bootstrap.sh` to install the new variables (try both setting and skipping each knob)
-- [ ] 5.2 Trigger a push-based run with no overrides and verify the PR body reports `sonnet` / `high` (or whatever the resolved values are) and the run completes
-- [ ] 5.3 Trigger a push-based run with `Opsx-Model: opus` in the commit trailer and verify the PR-comment reports the override; trigger another with `Opsx-Effort: low` and verify
-- [ ] 5.4 Trigger a manual `workflow_dispatch` with explicit `model` and `effort` inputs and verify the dispatch values win over both the trailer and the variables
-- [ ] 5.5 Submit an intentionally invalid `Opsx-Effort: extreme` and verify the workflow exits with a clear error before invoking Claude Code
-- [ ] 5.6 Update `docs/SETUP.md` / `docs/COSTS.md` with anything learned during dogfood and re-read both before closing the change
+- [x] 5.2 Trigger a push-based run with no overrides and verify the PR body reports `sonnet` / `high` (or whatever the resolved values are) and the run completes
+- [x] 5.3 Trigger a push-based run with `Opsx-Model: opus` in the commit trailer and verify the PR-comment reports the override; trigger another with `Opsx-Effort: low` and verify
+- [x] 5.4 Trigger a manual `workflow_dispatch` with explicit `model` and `effort` inputs and verify the dispatch values win over both the trailer and the variables
+- [x] 5.5 Submit an intentionally invalid `Opsx-Effort: extreme` and verify the workflow exits with a clear error before invoking Claude Code
+- [x] 5.6 Update `docs/SETUP.md` / `docs/COSTS.md` with anything learned during dogfood and re-read both before closing the change
