@@ -4,7 +4,7 @@ I want to run Claude Code authoring code in unattended mode where where and I do
 
 # Roadmap
 
-- [x] R1: Be able to complete the whole spec-driven flow end to end on the change branch. See: openspec/roadmap-items/R2-apply-flag.md (shipped via `opt-in-apply-trigger`, archived 2026-05-13)
-- [ ] R2: Automate onboarding and update delivery for new adopter repos, making it as easy as possible (e.g. run one script, minimze manual actions).
+- [x] R1: Be able to complete the whole spec-driven flow end to end on the change branch. See: openspec/explore/R1-apply-flag.md (shipped via `opt-in-apply-trigger`, archived 2026-05-13)
+- [ ] R2: Automate onboarding and delivery of updates for adopter repos, making it as easy as possible (e.g. run one script, minimze manual actions). See: openspec/explore/R2-onboarding.md
 - [ ] R3: cloud run `opsx:verify` after apply and... automatically fix? or: highlight in PR -> human review -> another go.
 - [ ] R4: Codify the working loop: describe the bigger problem → propose → iterate → split into smaller bite-size changes → apply changes one-by-one via remcc.
