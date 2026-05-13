@@ -12,6 +12,21 @@ the size of the change being applied: input tokens for the artifacts
 and output tokens for the agent's reasoning, edits, and command
 output it processes.
 
+The trigger surface is opt-in: the workflow runs apply only when the
+head commit on a `change/**` push has a subject starting with the
+magic word `@change-apply`. Draft commits, WIP edits, and co-author
+collaboration pushes that don't carry the trigger subject are skipped
+at the job-level `if:` — no runner is provisioned, no Anthropic
+tokens are spent, and no runner minutes are charged. Apply spend
+correlates with the number of trigger commits the author writes, not
+with the number of pushes.
+
+Capitalised case-typos (`@Change-Apply: ...`) are an edge case: the
+job-level `if:` lets them through (GitHub Actions' `startsWith()` is
+case-insensitive), and a case-sensitive shell guard step then aborts
+the run before the apply step. Cost: ~20 seconds of runner time per
+case-typo push, no Anthropic spend.
+
 There is no per-run kill switch in v1. Cost is bounded by:
 
 - **Anthropic admin-console budget cap.** This is the primary
@@ -86,7 +101,28 @@ appear in the body of every PR the workflow opens, and in the
 comment it leaves on re-runs of an existing PR. Use those values
 to audit cost decisions after the fact rather than guessing from
 the change name. See `docs/SETUP.md` for the override mechanics
-(repository variables, commit trailers, manual dispatch).
+(repository variables and commit trailers).
+
+#### Retry with a different model
+
+If a `sonnet` run produces a result you want to redo with `opus`,
+push a fresh trigger commit on the change branch carrying the
+override trailer:
+
+```sh
+git commit --allow-empty -m "$(cat <<'EOF'
+@change-apply: retry with opus
+
+Opsx-Model: opus
+EOF
+)"
+git push
+```
+
+The single commit is both the "go again" signal and the model
+override — no GitHub UI step, no context-switch out of the
+terminal. The PR comment for the new run reports `model=opus`
+and the source as `commit trailer Opsx-Model`.
 
 ## GitHub Actions runner minutes
 

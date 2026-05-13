@@ -120,7 +120,10 @@ to inherit it.
 
 Open `.github/workflows/opsx-apply.yml` and confirm:
 
-- It triggers on `push` to `change/**` and `workflow_dispatch`.
+- It triggers on `push` to `change/**` only (no `workflow_dispatch`
+  trigger surface).
+- The job-level `if:` gates on the head-commit subject starting with
+  `@change-apply`.
 - `permissions:` block contains only `contents: write` and
   `pull-requests: write`.
 - `timeout-minutes: 180`.
@@ -194,6 +197,112 @@ Re-running the script later is a no-op.
   occasionally adds new constraints. Capture the full error and
   open an issue on the remcc repo before working around it locally.
 
+## How to trigger a run
+
+A push to a `change/**` branch on its own does **not** run apply.
+The workflow's listener fires on every such push, but the job is
+gated by a single rule: it runs only when the head commit's
+subject (the first line of its message) starts with the byte
+sequence `@change-apply`. Pushes that don't match are a silent
+no-op — no runner is provisioned, no Anthropic tokens are spent,
+no PR comment is posted.
+
+This is the opt-in trigger. Authors can freely push WIP scaffolding,
+proposal edits, and co-author collaboration commits to a `change/**`
+branch without burning apply runs; the agent only goes when the
+author explicitly asks.
+
+### The canonical trigger commit
+
+```sh
+git commit --allow-empty -m "@change-apply: first pass"
+git push
+```
+
+An empty commit carries the "go" signal without bundling a noise
+edit. The agent picks up the current state of the branch (your
+prior WIP commits) and applies it. The workflow doesn't parse what
+follows `@change-apply` — that text is free-form context for
+humans reading `git log`.
+
+### Acceptable subject shapes
+
+All of these trigger apply:
+
+- `@change-apply: first pass` — conventional-commits shape
+  (recommended).
+- `@change-apply(retry with opus)` — parens shape.
+- `@change-apply retry after task 3` — space-separator shape.
+- `@change-apply` — bare, no description.
+
+Near-miss subjects do **not** trigger an apply:
+
+- `change-apply: retry` — missing `@`. Skipped at the job-level
+  `if:`; no runner provisioned.
+- `@change_apply: retry` — underscore instead of hyphen. Skipped
+  at the job-level `if:`.
+- ` @change-apply: retry` — leading whitespace. Skipped at the
+  job-level `if:`.
+- `@Change-Apply: retry` — capitalised. The job-level `if:`
+  evaluates true (GitHub Actions' `startsWith()` is
+  case-insensitive), but a case-sensitive shell guard step
+  immediately fails the run and skips the apply step. Cost: ~20s
+  of runner time, no Anthropic spend, no PR comment.
+
+The match is case-sensitive and byte-exact at position 0 of the
+subject. The `@`-prefix makes accidental triggers effectively
+impossible — natural commit subjects don't start with `@` — and
+pairs visually with the `change/<name>` branch convention (both
+refer to "the change").
+
+### Iterating on a change
+
+The typical loop:
+
+1. Push a `change/<name>` branch with a draft proposal. No apply
+   runs yet.
+2. Push more WIP commits — collaborator edits, task refinements,
+   spec polish. Still no apply runs.
+3. When ready, write the trigger commit: `git commit --allow-empty
+   -m "@change-apply: first pass"` and push. The agent runs; a PR
+   is opened.
+4. Review the PR. If you want another pass, push more WIP if
+   needed, then write another trigger commit (e.g.
+   `@change-apply: retry with feedback`) and push.
+
+Every apply run requires its own trigger commit. There is no
+"re-apply on every commit until done" mode by design — the
+author owns the moment.
+
+### Trigger commit without a terminal
+
+The workflow doesn't care how the commit was authored. If you're
+locked out of your terminal, you can author a trigger commit
+through the GitHub web UI's file-edit flow: make a tiny edit
+(adding or removing a blank line is enough), and set the commit
+subject to `@change-apply: <reason>`.
+
+### Wrong branch is a no-op
+
+Pushing a `@change-apply...` commit to a branch that doesn't match
+`change/**` does nothing. The push trigger's branch filter still
+applies — the workflow's listener doesn't fire at all on `main` or
+other branches.
+
+### Self-loop prevention
+
+After a successful apply run, the bot pushes its output commit
+with subject `/opsx:apply <name>`. That subject does not start
+with `@change-apply`, so the bot's own push does not re-trigger
+the workflow. This is implicit — no separate self-loop guard.
+
+The bot's push and any WIP push the author makes during an
+in-flight apply land in a separate `noop` partition of the
+workflow's concurrency group, so they never cancel a real apply
+run. `cancel-in-progress: true` still applies within the `apply`
+partition, so a fresh `@change-apply: retry` pushed while a prior
+apply is in flight correctly cancels the stale run.
+
 ## Configuring the apply model
 
 The `/opsx:apply` step is invoked with an explicit `--model` and
@@ -229,42 +338,30 @@ unset while setting `OPSX_APPLY_MODEL` is fine.
 The workflow resolves `model` and `effort` independently for every
 run with this precedence (highest first):
 
-1. `workflow_dispatch` input (when non-empty)
-2. Commit trailer on the head commit (`Opsx-Model:` / `Opsx-Effort:`)
-3. Repository variable (`OPSX_APPLY_MODEL` / `OPSX_APPLY_EFFORT`)
-4. Baked-in default (`sonnet` for model, `high` for effort)
+1. Commit trailer on the head commit (`Opsx-Model:` / `Opsx-Effort:`)
+2. Repository variable (`OPSX_APPLY_MODEL` / `OPSX_APPLY_EFFORT`)
+3. Baked-in default (`sonnet` for model, `high` for effort)
 
 #### Commit-trailer override
 
-For a push-triggered run, add a trailer to the head commit on the
-change branch:
+Add a trailer to the trigger commit on the change branch. The
+canonical idiom uses an empty commit with the `@change-apply`
+subject (see "How to trigger a run" below) plus a trailer block:
 
-```text
-Refactor auth middleware
+```sh
+git commit --allow-empty -m "$(cat <<'EOF'
+@change-apply: retry with opus
 
 Opsx-Model: opus
-Opsx-Effort: medium
+Opsx-Effort: low
+EOF
+)"
+git push
 ```
 
 Trailer parsing uses `git interpret-trailers`, so standard Git
 trailer rules apply: a blank line before the trailer block,
 `Token: value` per line, token matching is case-insensitive.
-
-#### Manual-dispatch override
-
-Trigger the workflow manually with `gh workflow run` (or from the
-Actions tab) and supply the inputs explicitly:
-
-```sh
-gh workflow run opsx-apply.yml \
-  --ref change/refactor-auth \
-  -f change_name=refactor-auth \
-  -f model=opus \
-  -f effort=low
-```
-
-Empty input means "no override" — leave a field blank to fall
-through to the trailer / repo variable / baked default.
 
 ### Resolved values are reported in the PR
 
@@ -278,9 +375,8 @@ through the Actions logs.
 
 Repository variables are not exposed to workflow runs originating
 from forked PRs. The `opsx-apply` workflow only triggers on `push`
-to `change/**` and on `workflow_dispatch`, both of which are
-privileged events on the main repo, so the fork-PR exposure path
-does not apply to remcc in practice.
+to `change/**`, which is a privileged event on the main repo, so
+the fork-PR exposure path does not apply to remcc in practice.
 
 ## Runner profile
 
@@ -347,22 +443,32 @@ Push a trivial change branch to verify the full path runs end to end.
    `remote: Bypassed rule violations for refs/heads/main` message
    in the output — that is GitHub recording your admin bypass and
    is expected).
-2. Create and push the change branch:
+2. Create and push the change branch (no apply run yet — the
+   branch push does not carry a trigger subject):
    ```sh
    git checkout main
    git pull --ff-only
    git checkout -b change/test-apply
    git push -u origin change/test-apply
    ```
-3. Within a few seconds, the `opsx-apply` workflow run should appear
+   Open the Actions tab and confirm **no** workflow run was started.
+3. Push the trigger commit to ask the agent to run:
+   ```sh
+   git commit --allow-empty -m "@change-apply: smoke test"
+   git push
+   ```
+4. Within a few seconds, the `opsx-apply` workflow run should appear
    under the repo's Actions tab. Watch the run and confirm:
-   - The workflow trigger fires.
+   - The workflow trigger fires and the job is not skipped.
    - Claude Code runs to completion (apply step exits, exit code is
      captured to a step output).
    - `openspec validate test-apply` runs and passes.
    - A pull request to `main` is opened from `change/test-apply`.
    - Workflow logs are uploaded as artifact `agent-logs-test-apply`.
-4. Close the PR without merging and delete the `change/test-apply`
+   - The bot's output push (subject `/opsx:apply test-apply`) does
+     **not** re-trigger the workflow — confirm by refreshing the
+     Actions tab and seeing no second run start.
+5. Close the PR without merging and delete the `change/test-apply`
    branch. The smoke test is over.
 
 If any step is observed to require manual intervention, that is a

@@ -4,62 +4,153 @@
 
 Defines the behaviour of the GitHub Actions workflow that runs
 `/opsx:apply` unattended on an ephemeral runner, on push to a
-`change/**` branch or via `workflow_dispatch`. The contract covers:
-the trigger surface, the runner-side sandbox (permissive inside, scoped
-GITHUB_TOKEN outside), the runtime preparation steps, the apply +
-validate sequence, the commit/push semantics, the PR open/update flow
-including draft-on-failure, concurrency, log-artifact upload, run
-timeout, and ANTHROPIC_API_KEY plumbing. It does not cover the
-GitHub-side configuration that bounds the bot — see `repo-adoption`.
+`change/**` branch when the head commit subject opts in via the
+`@change-apply` trigger convention. The contract covers: the trigger
+surface, the opt-in trigger commit gate, the runner-side sandbox
+(permissive inside, scoped GITHUB_TOKEN outside), the runtime
+preparation steps, the apply + validate sequence, the commit/push
+semantics, the PR open/update flow including draft-on-failure,
+concurrency partitioning between trigger and noop runs, log-artifact
+upload, run timeout, and ANTHROPIC_API_KEY plumbing. It does not
+cover the GitHub-side configuration that bounds the bot — see
+`repo-adoption`.
 
 ## Requirements
 
 ### Requirement: Trigger on change branch push
 
-The workflow SHALL be triggered automatically by a push event on any
-branch matching the pattern `change/**`.
+The workflow SHALL be triggered by a push event on any branch
+matching the pattern `change/**`. Whether the job actually runs
+apply depends on the head commit subject (see "Apply runs only on
+opt-in trigger commits") — the workflow's listener fires on every
+push to a `change/**` ref, but the job is gated so that only
+opt-in trigger commits cause work.
 
-#### Scenario: Push to a change branch starts the workflow
+#### Scenario: Push to a change branch starts the workflow listener
 
 - **WHEN** a commit is pushed to a branch named `change/<name>`
-- **THEN** the workflow runs with the change name resolved to `<name>`
+- **THEN** the workflow's listener fires; whether the job runs
+  depends on the head commit subject convention
 
 #### Scenario: Push to a non-change branch does not start the workflow
 
 - **WHEN** a commit is pushed to a branch not matching `change/**`
-- **THEN** the workflow does not run
+- **THEN** the workflow does not run, regardless of the commit
+  subject
 
-### Requirement: Manual dispatch with explicit change name
+### Requirement: Apply runs only on opt-in trigger commits
 
-The workflow SHALL support `workflow_dispatch` invocation with a
-required `change_name` input identifying the change to apply.
+The workflow SHALL run the apply job only when the head commit of
+the pushed `change/**` ref has a subject (the first line of its
+commit message) that starts with the byte sequence `@change-apply`
+(case-sensitive, byte-exact, including the leading `@`). The
+character that follows the magic word — colon, parenthesis,
+space, exclamation mark, newline, or end-of-string — SHALL NOT be
+validated; any continuation is treated as the author's free-form
+description.
 
-#### Scenario: Operator triggers a manual run
+Pushes whose head commit does not match this convention SHALL be
+a complete no-op: the job SHALL NOT start, SHALL NOT charge
+runner time, SHALL NOT post any PR comment, SHALL NOT upload any
+log artifact, and SHALL NOT call any Anthropic or GitHub API
+beyond what GitHub Actions itself performs to evaluate the
+trigger filter.
 
-- **WHEN** the operator invokes `workflow_dispatch` with
-  `change_name=foo`
-- **THEN** the workflow runs against the change named `foo`,
-  irrespective of the branch the dispatch was issued from
+The match SHALL be implemented as a job-level `if:` expression
+(e.g. `if: startsWith(github.event.head_commit.message,
+'@change-apply')`) so that GitHub Actions skips the job before
+any runner is provisioned.
+
+The text after the magic word SHALL NOT be parsed by the workflow;
+it is human context only.
+
+#### Scenario: Trigger commit with colon-separator runs apply
+
+- **WHEN** a commit is pushed to `change/foo` and its subject is
+  `@change-apply: first pass`
+- **THEN** the workflow runs the apply job against change `foo`
+
+#### Scenario: Trigger commit with parens runs apply
+
+- **WHEN** a commit is pushed to `change/foo` and its subject is
+  `@change-apply(retry with opus)`
+- **THEN** the workflow runs the apply job against change `foo`
+
+#### Scenario: Trigger commit with space-separator runs apply
+
+- **WHEN** a commit is pushed to `change/foo` and its subject is
+  `@change-apply retry after task 3`
+- **THEN** the workflow runs the apply job against change `foo`
+
+#### Scenario: Bare trigger commit runs apply
+
+- **WHEN** a commit is pushed to `change/foo` and its subject is
+  exactly `@change-apply`
+- **THEN** the workflow runs the apply job against change `foo`
+
+#### Scenario: Non-trigger commit subject is a no-op
+
+- **WHEN** a commit is pushed to `change/foo` and its subject is
+  `tweak proposal wording`
+- **THEN** the workflow job is skipped before any runner is
+  provisioned, no PR comment is posted, no log artifact is
+  uploaded, and no Anthropic API call is made
+
+#### Scenario: Trigger token in body but not subject is a no-op
+
+- **WHEN** a commit is pushed to `change/foo` whose subject is
+  `wip refactor` and whose body contains the line
+  `@change-apply: retry`
+- **THEN** the workflow job is skipped (the trigger token only
+  counts at the start of the subject line)
+
+#### Scenario: Similar-looking subjects do not trigger an apply
+
+- **WHEN** a commit is pushed to `change/foo` with any of the
+  subjects `change-apply: retry` (no `@`),
+  `@change_apply: retry` (underscore),
+  ` @change-apply: retry` (leading space), or
+  `[@change-apply] retry`
+- **THEN** the job-level `if:` evaluates false and the workflow
+  job is skipped (no runner provisioned, no Anthropic spend)
+
+#### Scenario: Case-variant subjects are blocked at the guard step
+
+- **WHEN** a commit is pushed to `change/foo` with a subject like
+  `@Change-Apply: retry` or `@CHANGE-APPLY: retry`
+- **THEN** the job-level `if:` lets the run start (GitHub Actions'
+  `startsWith()` is case-insensitive), the case-sensitive shell
+  guard step fails the run, and all subsequent steps including
+  `Run /opsx:apply` are skipped — no Anthropic spend, no PR
+  comment, no log artifact written by the agent
+
+#### Scenario: Bot's own commit subject does not trigger
+
+- **WHEN** the workflow's "Stage and commit agent output" step
+  creates a commit whose subject is `/opsx:apply foo`
+- **AND** that commit is pushed to `change/foo`
+- **THEN** the workflow job is skipped (the bot's subject does
+  not start with `@change-apply`), implicitly preventing
+  self-loops
+
+#### Scenario: Trigger commit on a non-change branch is a no-op
+
+- **WHEN** a commit with subject `@change-apply: retry` is
+  pushed to branch `main`
+- **THEN** the workflow does not run (the push trigger's
+  `change/**` branch filter still applies)
 
 ### Requirement: Change name resolution
 
-The workflow SHALL resolve the change name from the
-`workflow_dispatch` input when present, otherwise from the branch ref
-by stripping the `change/` prefix. The workflow SHALL fail early if
-the resolved change name does not correspond to an existing directory
-under `openspec/changes/`.
+The workflow SHALL resolve the change name from the pushed branch
+ref by stripping the `change/` prefix. The workflow SHALL fail
+early if the resolved change name does not correspond to an
+existing directory under `openspec/changes/`.
 
 #### Scenario: Resolution from branch ref
 
-- **WHEN** the workflow is triggered by a push to `change/foo`
-- **AND** no `workflow_dispatch` input is present
+- **WHEN** the workflow runs on a push to `change/foo`
 - **THEN** the resolved change name is `foo`
-
-#### Scenario: Resolution from dispatch input takes precedence
-
-- **WHEN** the workflow is triggered by `workflow_dispatch` with
-  `change_name=bar` while running on branch `change/foo`
-- **THEN** the resolved change name is `bar`
 
 #### Scenario: Missing change directory fails the workflow early
 
@@ -159,8 +250,7 @@ of `sonnet` for model and `high` for effort.
 
 - **WHEN** the workflow runs with `vars.OPSX_APPLY_MODEL=opus` and
   `vars.OPSX_APPLY_EFFORT=medium`
-- **AND** no overrides are present (no non-empty dispatch input,
-  no commit trailer)
+- **AND** no overrides are present (no commit trailer)
 - **THEN** the resolved model is `opus` and the resolved effort
   is `medium`
 
@@ -179,36 +269,6 @@ of `sonnet` for model and `high` for effort.
 - **AND** no overrides are present
 - **THEN** the resolved model is `opus` and the resolved effort
   is the baked-in default `high`
-
-### Requirement: Manual dispatch inputs override defaults
-
-The workflow's `workflow_dispatch` SHALL accept optional `model`
-and `effort` inputs. When the workflow is triggered by
-`workflow_dispatch` and the corresponding input value is non-empty,
-that value SHALL override the variable-sourced or baked-in default
-for that knob, independently of the other knob.
-
-#### Scenario: Dispatch overrides only the model
-
-- **WHEN** the operator dispatches with `model=opus` and `effort`
-  left empty
-- **AND** the repo variables are unset
-- **THEN** the resolved model is `opus` and the resolved effort is
-  the baked-in default `high`
-
-#### Scenario: Dispatch overrides both knobs
-
-- **WHEN** the operator dispatches with `model=opus` and
-  `effort=low`
-- **THEN** the resolved model is `opus` and the resolved effort
-  is `low`, regardless of any repo-variable values
-
-#### Scenario: Empty dispatch input is not an override
-
-- **WHEN** the operator dispatches with both inputs left empty
-- **AND** `vars.OPSX_APPLY_MODEL=opus` is set
-- **THEN** the resolved model is `opus` (the variable wins; the
-  empty input is not treated as an explicit override)
 
 ### Requirement: Commit trailer overrides defaults on push
 
@@ -243,31 +303,29 @@ that knob. Trailers SHALL be parsed by a strict trailer parser
 
 ### Requirement: Override precedence
 
-When multiple override sources are present, the workflow SHALL
-resolve each knob (`model`, `effort`) independently using this
-precedence, highest to lowest: non-empty `workflow_dispatch` input,
-commit trailer on the head commit, repository variable, baked-in
-default.
-
-#### Scenario: Dispatch input beats commit trailer
-
-- **WHEN** the workflow is dispatched with `model=opus`
-- **AND** the head commit message contains `Opsx-Model: haiku`
-- **THEN** the resolved model is `opus`
+The workflow SHALL resolve each of `model` and `effort`
+independently using this precedence, highest to lowest: commit
+trailer on the head commit, repository variable, baked-in default.
 
 #### Scenario: Commit trailer beats repository variable
 
-- **WHEN** the workflow is triggered by push and no
-  `workflow_dispatch` is in flight
-- **AND** the head commit message contains `Opsx-Model: opus`
+- **WHEN** the head commit message contains `Opsx-Model: opus`
 - **AND** `vars.OPSX_APPLY_MODEL=haiku` is set
 - **THEN** the resolved model is `opus`
 
 #### Scenario: Repository variable beats baked-in default
 
-- **WHEN** no dispatch input or commit trailer overrides `model`
+- **WHEN** no commit trailer overrides `model`
 - **AND** `vars.OPSX_APPLY_MODEL=opus` is set
 - **THEN** the resolved model is `opus`
+
+#### Scenario: Baked-in default applies when nothing else does
+
+- **WHEN** no commit trailer overrides `model` or `effort`
+- **AND** neither `vars.OPSX_APPLY_MODEL` nor
+  `vars.OPSX_APPLY_EFFORT` is set
+- **THEN** the resolved model is `sonnet` and the resolved
+  effort is `high`
 
 ### Requirement: Effort enum validation
 
@@ -282,8 +340,8 @@ source.
 - **WHEN** the resolved effort value is `extreme`
 - **THEN** the workflow exits non-zero before invoking Claude
   Code, with a message naming the invalid value and the source it
-  came from (dispatch input, commit trailer, repository variable,
-  or baked-in default)
+  came from (commit trailer, repository variable, or baked-in
+  default)
 
 #### Scenario: Valid effort proceeds
 
@@ -414,6 +472,44 @@ to a change branch cancels any in-flight run for the same branch.
 - **WHEN** a workflow run is in progress for branch `change/foo`
 - **AND** a new commit is pushed to `change/foo`
 - **THEN** the prior run is cancelled and a new run begins
+
+### Requirement: Concurrency group is partitioned by trigger-vs-noop
+
+The workflow's concurrency group key SHALL include a partition
+suffix that is `apply` when the head commit subject opts into the
+apply trigger and `noop` otherwise, so that `cancel-in-progress:
+true` only cancels runs within the `apply` slot. Non-trigger
+pushes (the bot's own output push, WIP commits, near-miss
+subjects) SHALL NOT cancel an in-flight apply run.
+
+#### Scenario: Bot's output push does not cancel the parent apply
+
+- **WHEN** an apply run on `change/foo` completes its `Push branch`
+  step (pushing the bot's `/opsx:apply foo` commit)
+- **AND** the resulting push fires a new workflow listener
+- **THEN** the new listener's run is placed in the `noop` partition
+  of the concurrency group, separate from the parent run's
+  `apply` partition
+- **AND** the parent run finishes with overall conclusion `success`
+  (not `cancelled`)
+
+#### Scenario: WIP push during in-flight apply does not cancel it
+
+- **WHEN** an apply run on `change/foo` is in flight
+- **AND** an author pushes a draft commit (subject not starting
+  with `@change-apply`) to the same branch
+- **THEN** the WIP push's run is placed in the `noop` partition
+- **AND** the in-flight apply continues to completion uninterrupted
+
+#### Scenario: Fresh trigger push during in-flight apply cancels it
+
+- **WHEN** an apply run on `change/foo` is in flight
+- **AND** an author pushes another commit whose subject starts
+  with `@change-apply` to the same branch
+- **THEN** both runs share the `apply` partition of the
+  concurrency group
+- **AND** `cancel-in-progress: true` cancels the in-flight run so
+  the new trigger commit applies against the latest branch state
 
 ### Requirement: Upload apply and validate logs
 
