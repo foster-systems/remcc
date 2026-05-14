@@ -122,6 +122,6 @@ Opens a `remcc-upgrade` PR with the template diff — see [docs/SETUP.md#upgradi
 - [docs/SECURITY.md](docs/SECURITY.md) — threat model, identity boundary, hardening caveats by repo ownership.
 - [docs/COSTS.md](docs/COSTS.md) — Anthropic API and GitHub Actions cost guidance.
 
-## Status & license
+## Status
 
-remcc v1 targets single-repo adoption and is stable enough for trial use.
+remcc v1 targets monorepo adoption and is stable enough for trial use.
