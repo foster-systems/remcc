@@ -114,14 +114,14 @@ Deeper hardening caveats (org-vs-user-owned repo, GHAS-gated controls) live in [
 bash <(curl -fsSL https://raw.githubusercontent.com/premeq/remcc/main/install.sh) upgrade
 ```
 
-Opens a `remcc-upgrade` PR with the template diff against the pinned ref — see [docs/SETUP.md#upgrading-remcc](docs/SETUP.md#upgrading-remcc).
+Opens a `remcc-upgrade` PR with the template diff — see [docs/SETUP.md#upgrading-remcc](docs/SETUP.md#upgrading-remcc).
 
 ## Docs
 
-- [docs/SETUP.md](docs/SETUP.md) — prerequisites, App setup, automated and manual adoption, configuration knobs, smoke tests.
+- [docs/SETUP.md](docs/SETUP.md) — prerequisites, App setup, automated and manual adoption, configuration knobs.
 - [docs/SECURITY.md](docs/SECURITY.md) — threat model, identity boundary, hardening caveats by repo ownership.
 - [docs/COSTS.md](docs/COSTS.md) — Anthropic API and GitHub Actions cost guidance.
 
 ## Status & license
 
-remcc v1 targets single-repo adoption and is stable enough for trial use; the historical change record lives under [`openspec/changes/archive/`](openspec/changes/archive/). MIT — see [LICENSE](LICENSE).
+remcc v1 targets single-repo adoption and is stable enough for trial use.
