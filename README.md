@@ -2,7 +2,7 @@
 
 <img src="assets/logo.png" width="180" alt="remcc logo">
 
-# remcc
+# remcc: Remote Claude Code
 
 Run Claude Code unattended — push a change branch, get a PR.
 
@@ -22,6 +22,8 @@ Push a `change/<name>` branch carrying an OpenSpec proposal and an `@change-appl
 - **Tight safety boundary.** The bot authenticates as a GitHub App scoped to `change/**`, `main` is branch-protected, and a `change/**` ruleset blocks force-push and deletion.
 
 ## Quickstart
+
+**Prerequisites**: a `remcc` GitHub App installed on the target repo, an Anthropic API key with budget, and an OpenSpec-initialised repo with `.claude/` committed — see [docs/SETUP.md#prerequisites](docs/SETUP.md#prerequisites) for the full checklist.
 
 From a clean clone of the target repository on `main`:
 
