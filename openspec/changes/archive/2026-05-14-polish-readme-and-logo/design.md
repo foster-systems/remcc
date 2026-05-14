@@ -61,14 +61,13 @@ Badges are sourced from `img.shields.io` URLs only, so we incur no infra: licens
 1. **Hero** — `<div align="center">` with logo (≤180px wide), `# remcc`, one-line tagline, badges row.
 2. **Pitch** — single paragraph: "Run Claude Code unattended on GitHub Actions. Push a `change/<name>` branch with an OpenSpec proposal and an `@change-apply` opt-in commit; remcc implements it on a runner and opens a PR for review."
 3. **Why remcc** — three bullets (no laptop tether, normal PR review, tight safety boundary). Each bullet ≤ 2 lines.
-4. **Quickstart** — the `install.sh init` one-liner in a fenced block, followed by a single sentence summarising what it does. Link to `docs/SETUP.md` for the full flow and to the manual fallback.
-5. **What you get** — short capability snapshot (5–6 bullets): change-branch trigger with `@change-apply` opt-in, GitHub App identity scoped to `change/**`, branch-protected `main`, per-run model/effort overrides, draft-on-failure PRs, `install.sh upgrade` to refresh templates. Each bullet links to the relevant doc anchor where it makes sense.
-6. **Limitations** — keep the existing concise bullet list (Claude Code only, GitHub Actions only, OpenSpec only, pnpm-only, one invocation per change). Move org-vs-user-owned hardening caveat into `docs/SECURITY.md` link rather than inline.
-7. **Upgrade** — the `install.sh upgrade` one-liner with one sentence; link to `docs/SETUP.md#upgrading-remcc`.
-8. **Docs & links** — three-line link list to `docs/SETUP.md`, `docs/SECURITY.md`, `docs/COSTS.md`.
-9. **Status & license** — one paragraph: maturity ("v1, single-repo adoption"), link to OpenSpec changes archive, license line ("MIT — see `LICENSE`").
+4. **Full walkthrough in 3 minutes** — single end-to-end walkthrough replacing the originally planned separate `Quickstart` and `What you get` sections. Opens with a one-line summary of the three phases (author locally → apply on a runner → review and merge locally) and a small horizontal Mermaid flow diagram of those phases. Then eight numbered step subheadings (`01`–`08`, rendered as monospace pills) covering: prerequisites, installation (`install.sh init` one-liner), `claude /opsx:propose`, the `@change-apply` trigger commit with `Opsx-Model:` / `Opsx-Effort:` trailers, `/opsx:apply` on the ephemeral Ubuntu runner, the bot-authored PR via the GitHub App, local `claude /opsx:verify` + `claude /opsx:archive`, and approve-and-merge. Horizontal-rule + bold lane label between steps 4↔5 and 6↔7 marks the local→runner→local handoff. The capability points originally planned for `What you get` are folded into the corresponding walkthrough steps (App identity in step 6, model/effort overrides in step 4, draft-on-failure in step 6).
+5. **Limitations** — keep the existing concise bullet list (Claude Code only, GitHub Actions only, OpenSpec only, pnpm-only, one invocation per change). Move org-vs-user-owned hardening caveat into `docs/SECURITY.md` link rather than inline.
+6. **Upgrade** — the `install.sh upgrade` one-liner with one sentence; link to `docs/SETUP.md#upgrading-remcc`.
+7. **Docs & links** — three-line link list to `docs/SETUP.md`, `docs/SECURITY.md`, `docs/COSTS.md`.
+8. **Status & license** — one paragraph: maturity ("v1, single-repo adoption"), link to OpenSpec changes archive, license line ("MIT — see `LICENSE`").
 
-This ordering puts the actionable one-liner above the fold for a returning user, and the value-prop bullets above the fold for a drive-by. Limitations stay visible but no longer dominate.
+This ordering puts the actionable one-liner above the fold for a returning user (now step `02` of the walkthrough), and the value-prop bullets above the fold for a drive-by. Limitations stay visible but no longer dominate. The merged walkthrough replaced the original 9-section structure during implementation because the install one-liner, capability snapshot, and review flow read more naturally as one end-to-end story than as three separate bullet-list sections.
 
 ### Decision: Tagline copy
 

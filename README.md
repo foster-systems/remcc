@@ -23,7 +23,7 @@ Push a `change/<name>` branch carrying an [OpenSpec](https://github.com/Fission-
 
 ## Full walkthrough in 3 minutes
 
-Three phases: author locally, apply on a runner, review and merge locally.
+> Three phases: [author locally] -> [apply on a runner] -> [review and merge locally]
 
 ### `01` · Prerequisites
 
@@ -64,7 +64,7 @@ Only commit subjects starting with `@change-apply` trigger apply. Trailers (`Ops
 
 ---
 
-#### :robot: **Runner takes over.** 
+#### :robot: **Runner takes over.**
 
 ### `05` · `/opsx:apply` runs on a GitHub-hosted Ubuntu VM
 
