@@ -93,13 +93,19 @@
       version marker, PR opened with file list and pre-existing flags,
       no apply run triggered. Codified as `scripts/smoke-init.sh`; passed
       against `premeq/remcc-smoke` on 2026-05-14.
-- [ ] 7.2 Smoke-test against a target that already has a customized
+- [x] 7.2 Smoke-test against a target that already has a customized
       `.claude/settings.json`; verify the PR body flags it and the diff
-      surfaces the overwrite.
+      surfaces the overwrite. `scripts/smoke-init.sh` seeds an operator-
+      shaped settings.json (`{"permissions":{"allow":["Bash(npm test)"]}}`)
+      and asserts the seed token is absent from the post-init file —
+      proving the overwrite — alongside the existing "PR body flags
+      pre-existing paths" assertion.
 - [ ] 7.3 Re-run `install.sh init` on the same target; verify "already up
-      to date" path is hit (task 5.6).
+      to date" path is hit (task 5.6). Automated by
+      `scripts/smoke-postmerge.sh` Step 2 (after the PR merge in Step 1).
 - [ ] 7.4 After merging the init PR, run the smoke-test one-liner from
-      the PR body; confirm an apply run completes end-to-end.
+      the PR body; confirm an apply run completes end-to-end. Automated
+      by `scripts/smoke-postmerge.sh` Steps 3–4 (~$0.50–$5 Anthropic spend).
 
 ## 8. Release
 

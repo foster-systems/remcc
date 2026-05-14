@@ -87,7 +87,15 @@ if [ "$SKIP_SETUP" = 0 ]; then
 JSON
   touch pnpm-lock.yaml
   mkdir -p openspec .claude
-  echo '{}' > .claude/settings.json
+  # Seed a realistic operator-customized .claude/settings.json so the
+  # overwrite assertion in Step 3 has something concrete to detect.
+  cat > .claude/settings.json <<'JSON'
+{
+  "permissions": {
+    "allow": ["Bash(npm test)"]
+  }
+}
+JSON
   touch openspec/.gitkeep
   git add .
   git -c user.email=smoke@example.com -c user.name=smoke commit -m "Seed prereqs"
@@ -129,6 +137,13 @@ git checkout remcc-init
 for f in .github/workflows/opsx-apply.yml .claude/settings.json openspec/config.yaml .remcc/version; do
   [ -f "$f" ] && pass "exists: $f" || fail "missing: $f"
 done
+
+# Operator-seeded .claude/settings.json should be overwritten by the template.
+if grep -q '"Bash(npm test)"' .claude/settings.json; then
+  fail "operator seed survived in .claude/settings.json — template did NOT overwrite"
+else
+  pass "operator-seeded .claude/settings.json was overwritten by the template"
+fi
 
 SRC_REF="$(jq -r .source_ref < .remcc/version)"
 SRC_SHA="$(jq -r .source_sha < .remcc/version)"
