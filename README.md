@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/remcc-logo-2.png" width="180" alt="remcc logo">
+<img src="assets/remcc-logo.png" width="180" alt="remcc logo">
 
 # remcc
 
@@ -34,7 +34,7 @@ This verifies prerequisites, configures GitHub-side controls (branch protection,
 ## What you get
 
 - **Change-branch trigger with `@change-apply` opt-in.** Pushing to `change/<name>` only fires the workflow when the head commit subject opts in — see [docs/SETUP.md#the-canonical-trigger-commit](docs/SETUP.md#the-canonical-trigger-commit).
-- **GitHub App identity scoped to `change/**`.** The bot authors PRs as `app/<slug>` via `REMCC_APP_ID` / `REMCC_APP_PRIVATE_KEY` / `REMCC_APP_SLUG`, with installation permissions limited to the change-branch surface.
+- **GitHub App identity scoped to `change/**`.** The bot authors PRs as `app/<slug>`via`REMCC_APP_ID`/`REMCC_APP_PRIVATE_KEY`/`REMCC_APP_SLUG`, with installation permissions limited to the change-branch surface.
 - **Branch-protected `main`.** Direct pushes to `main` are blocked; the bot's only path is a PR.
 - **Per-run model and effort overrides.** Defaults live in repo variables `OPSX_APPLY_MODEL` / `OPSX_APPLY_EFFORT`; trailers on the trigger commit or `workflow_dispatch` inputs override per run — see [docs/SETUP.md#configuring-the-apply-model](docs/SETUP.md#configuring-the-apply-model).
 - **Draft PR on failure.** If `/opsx:apply` errors, remcc still opens a draft PR with logs attached so you can debug from the diff.
