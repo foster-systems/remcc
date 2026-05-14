@@ -23,6 +23,7 @@ proceeding.
 | 5 | **pnpm-managed JavaScript project with a committed `pnpm-lock.yaml` at the repo root** | `test -f pnpm-lock.yaml && echo ok` |
 | 6 | Local tools installed: `gh`, `jq`, `git`, Node.js ≥ 20.19, `pnpm` | `gh --version && jq --version && node -v && pnpm -v` |
 | 7 | An Anthropic API key with budget configured | (key is uploaded as a repo secret in step 3 below) |
+| 8 | A fine-grained GitHub PAT with `Contents: write` + `Workflows: write` on the target repo | Create at <https://github.com/settings/personal-access-tokens/new> (PAT is uploaded as the `WORKFLOW_PAT` repo secret in step 3 below) |
 
 > **v1 supports pnpm-managed repos only.** The workflow runs
 > `pnpm install --frozen-lockfile`. If your repository uses npm, yarn,
@@ -259,14 +260,24 @@ The script:
 7. Prompts for `ANTHROPIC_API_KEY` (input hidden) and uploads it as
    the repository secret. If the variable is already set in your
    shell, the script picks it up and does not prompt.
-8. Prompts for `OPSX_APPLY_MODEL` and `OPSX_APPLY_EFFORT` — the
+8. Prompts for `WORKFLOW_PAT` (input hidden) and uploads it as the
+   repository secret. The workflow checks out the change branch
+   using this PAT because the default `GITHUB_TOKEN` cannot push
+   changes under `.github/workflows/` — any agent task that creates
+   or edits a workflow file would otherwise fail at the push step.
+   Create the PAT at <https://github.com/settings/personal-access-tokens/new>
+   as a **fine-grained** token scoped to the target repo only, with
+   permissions `Contents: write` and `Workflows: write`. If
+   `WORKFLOW_PAT` is already set in your shell, the script picks it
+   up and does not prompt.
+9. Prompts for `OPSX_APPLY_MODEL` and `OPSX_APPLY_EFFORT` — the
    per-repo defaults for the `/opsx:apply` step. Empty input
    leaves the variable unset, in which case the workflow's
    baked-in defaults (`sonnet` / `high`) apply. The script reads
    `OPSX_APPLY_MODEL` / `OPSX_APPLY_EFFORT` from the environment
    if set, so the prompts can be skipped in scripted runs. See
    "Configuring the apply model" below for what these knobs do.
-9. Runs an idempotency smoke test: re-applies every change and
+10. Runs an idempotency smoke test: re-applies every change and
    diffs the resulting state. A diff is a bug — please report it.
 
 Re-running the script later is a no-op.
@@ -487,6 +498,7 @@ task itself.
 | Claude Code CLI | `npm install -g @anthropic-ai/claude-code` | Invoked with `--dangerously-skip-permissions` |
 | OpenSpec CLI | `npm install -g @fission-ai/openspec@latest` | Used for the post-apply validate step |
 | `ANTHROPIC_API_KEY` | Repo secret, exposed as env | Set by `gh-bootstrap.sh`; redacted from logs by GitHub |
+| `WORKFLOW_PAT` | Repo secret, used as the `actions/checkout` token | Set by `gh-bootstrap.sh`; required because `GITHUB_TOKEN` cannot push under `.github/workflows/` |
 
 ### Provided by the `ubuntu-latest` image
 
@@ -578,8 +590,10 @@ remcc is reversible. To remove it from a target repository:
    This deletes any rulesets the script created, removes branch
    protection on `main`, disables secret scanning + push protection
    (where applicable), reverts the Allow-Actions-create-PRs toggle,
-   and deletes the `ANTHROPIC_API_KEY` repository secret. It does
-   not touch any files in your repository.
+   and deletes the `ANTHROPIC_API_KEY` and `WORKFLOW_PAT` repository
+   secrets. It does not touch any files in your repository (and it
+   does not revoke the PAT itself — do that at
+   <https://github.com/settings/personal-access-tokens>).
 2. **Workflow file** — delete it from the repository:
    ```sh
    git rm .github/workflows/opsx-apply.yml

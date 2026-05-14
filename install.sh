@@ -97,8 +97,8 @@ Behavior:
   2. Resolves a remcc ref and shallow-clones premeq/remcc at that ref
      into a tempdir (cleaned up on exit).
   3. Runs the cloned gh-bootstrap.sh against the target repo (branch
-     protection, rulesets, ANTHROPIC_API_KEY secret, apply configuration
-     variables). Idempotent on re-run.
+     protection, rulesets, ANTHROPIC_API_KEY + WORKFLOW_PAT secrets, apply
+     configuration variables). Idempotent on re-run.
   4. Writes template-managed files (overwrites any existing copies):
        .github/workflows/opsx-apply.yml
        .claude/settings.json
@@ -115,6 +115,11 @@ branch or PR.
 
 Environment passthrough (consumed by gh-bootstrap.sh):
   ANTHROPIC_API_KEY     Anthropic API key (prompted if unset).
+  WORKFLOW_PAT          Fine-grained PAT with Contents:write + Workflows:write
+                        on the target repo. Required by opsx-apply.yml because
+                        GITHUB_TOKEN cannot push under .github/workflows/.
+                        Create at https://github.com/settings/personal-access-tokens/new.
+                        Prompted if unset.
   OPSX_APPLY_MODEL      Per-repo default Claude model alias.
   OPSX_APPLY_EFFORT     Per-repo default thinking-budget level.
 USAGE

@@ -5,7 +5,8 @@
 # second-run idempotency check).
 #
 # Usage:
-#   ANTHROPIC_API_KEY=sk-... scripts/smoke-init.sh \
+#   ANTHROPIC_API_KEY=sk-... WORKFLOW_PAT=github_pat_... \
+#     scripts/smoke-init.sh \
 #     [--target OWNER/NAME] [--ref REF|auto] [--workdir DIR] \
 #     [--skip-setup] [--cleanup]
 #
@@ -38,6 +39,7 @@ while [ $# -gt 0 ]; do
 done
 
 : "${ANTHROPIC_API_KEY:?must be set — install.sh passes it through to gh-bootstrap.sh}"
+: "${WORKFLOW_PAT:?must be set — install.sh passes it through to gh-bootstrap.sh (Contents:write + Workflows:write on the target repo)}"
 for t in gh jq pnpm git curl; do
   command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 1; }
 done

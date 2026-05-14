@@ -16,6 +16,11 @@
 #     bot is therefore unable to rewrite CI; the operator (admin) bypasses.
 #   - Secret scanning + secret push protection on the repository.
 #   - The repository secret ANTHROPIC_API_KEY (prompted or read from env).
+#   - The repository secret WORKFLOW_PAT (prompted or read from env). The
+#     `opsx-apply` workflow checks out via this PAT because the default
+#     GITHUB_TOKEN cannot push changes under `.github/workflows/`. Create
+#     it at https://github.com/settings/personal-access-tokens/new with
+#     `Contents: write` + `Workflows: write` on the target repo only.
 #   - The repository variables OPSX_APPLY_MODEL and OPSX_APPLY_EFFORT, which
 #     set per-repo defaults for the /opsx:apply step. Each is prompted or
 #     read from an env var of the same name; empty input leaves the variable
@@ -344,6 +349,55 @@ remove_anthropic_secret() {
 }
 
 # ----------------------------------------------------------------------------
+# WORKFLOW_PAT repository secret
+#
+# Required by templates/workflows/opsx-apply.yml: the workflow checks out
+# with this PAT because GITHUB_TOKEN cannot push changes under
+# `.github/workflows/`, so any agent task that touches a workflow file
+# would otherwise fail at the push step. PAT needs `Contents: write` +
+# `Workflows: write` on the target repo only (fine-grained, repo-scoped).
+# ----------------------------------------------------------------------------
+
+read_workflow_pat_into_env() {
+  if [ -n "${WORKFLOW_PAT:-}" ]; then
+    return 0
+  fi
+  printf 'Enter WORKFLOW_PAT (fine-grained PAT with Contents:write + Workflows:write on this repo; input hidden): ' >&2
+  local pat=""
+  if [ -t 0 ]; then
+    stty -echo
+    IFS= read -r pat
+    stty echo
+    printf '\n' >&2
+  else
+    IFS= read -r pat
+  fi
+  [ -n "${pat}" ] || err "WORKFLOW_PAT was empty"
+  export WORKFLOW_PAT="${pat}"
+}
+
+configure_workflow_pat_secret() {
+  local repo="$1"
+  log "Repository secret WORKFLOW_PAT (${repo})"
+  read_workflow_pat_into_env
+  printf '%s' "${WORKFLOW_PAT}" \
+    | gh secret set WORKFLOW_PAT --repo "${repo}" >/dev/null
+  sub "uploaded"
+}
+
+remove_workflow_pat_secret() {
+  local repo="$1"
+  log "Removing repository secret WORKFLOW_PAT (${repo})"
+  if gh secret list --repo "${repo}" --json name --jq '.[].name' \
+       | grep -qx WORKFLOW_PAT; then
+    gh secret delete WORKFLOW_PAT --repo "${repo}" >/dev/null
+    sub "removed"
+  else
+    sub "already absent"
+  fi
+}
+
+# ----------------------------------------------------------------------------
 # Apply configuration variables: OPSX_APPLY_MODEL / OPSX_APPLY_EFFORT
 # ----------------------------------------------------------------------------
 
@@ -503,9 +557,13 @@ Usage:
   bash gh-bootstrap.sh --uninstall    revert remcc-managed configuration
   bash gh-bootstrap.sh --help         show this message
 
-The install path will prompt for ANTHROPIC_API_KEY unless it is already set in
-the environment. The uninstall path does not delete repository content; it
-only reverses the GitHub-side configuration this script applies.
+The install path will prompt for ANTHROPIC_API_KEY and WORKFLOW_PAT unless they
+are already set in the environment. WORKFLOW_PAT must be a fine-grained PAT
+with Contents:write + Workflows:write on the target repo; the workflow uses it
+to check out and push because GITHUB_TOKEN cannot modify .github/workflows/.
+
+The uninstall path does not delete repository content; it only reverses the
+GitHub-side configuration this script applies.
 USAGE
 }
 
@@ -521,6 +579,7 @@ install_remcc() {
   configure_secret_scanning "${repo}"
   configure_actions_pr_creation "${repo}"
   configure_anthropic_secret "${repo}"
+  configure_workflow_pat_secret "${repo}"
   configure_apply_config_variables "${repo}"
   run_idempotency_smoke_test "${repo}"
 
@@ -539,6 +598,7 @@ uninstall_remcc() {
   disable_secret_scanning "${repo}"
   disable_actions_pr_creation "${repo}"
   remove_anthropic_secret "${repo}"
+  remove_workflow_pat_secret "${repo}"
   remove_apply_config_variables "${repo}"
 
   log "Uninstall complete for ${repo}"

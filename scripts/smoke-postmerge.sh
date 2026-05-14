@@ -16,7 +16,8 @@
 #   4. Poll the workflow until it concludes; assert success.
 #
 # Usage:
-#   ANTHROPIC_API_KEY=sk-... scripts/smoke-postmerge.sh \
+#   ANTHROPIC_API_KEY=sk-... WORKFLOW_PAT=github_pat_... \
+#     scripts/smoke-postmerge.sh \
 #     [--target OWNER/NAME] [--workdir DIR] [--ref REF|auto] [--cleanup]
 
 set -euo pipefail
@@ -38,6 +39,9 @@ while [ $# -gt 0 ]; do
 done
 
 : "${ANTHROPIC_API_KEY:?must be set — smoke-test apply consumes Anthropic tokens}"
+# Not re-uploaded here (smoke-init seeded it on the target), but checked
+# so a forgotten env fails fast rather than partway through Step 4.
+: "${WORKFLOW_PAT:?must be set — same PAT smoke-init seeded as the target repo secret}"
 for t in gh jq git curl; do
   command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 1; }
 done
@@ -69,8 +73,12 @@ cd "$WORKDIR"
 PR_NUM="$(gh pr list --repo "$TARGET" --head remcc-init --state open --json number --jq '.[0].number // empty')"
 [ -n "$PR_NUM" ] || { echo "no open remcc-init PR on $TARGET — run scripts/smoke-init.sh first" >&2; exit 1; }
 
-gh pr merge "$PR_NUM" --repo "$TARGET" --squash --delete-branch >/dev/null
-pass "merged PR #$PR_NUM (squash + delete branch)"
+# --admin: the ruleset install.sh seeds restricts updates on all branches
+# except change/**; admins bypass via RepositoryRole. The smoke seed user
+# owns the target repo, so this matches the real operator-merging-own-PR
+# path.
+gh pr merge "$PR_NUM" --repo "$TARGET" --squash --delete-branch --admin >/dev/null
+pass "merged PR #$PR_NUM (squash + delete branch, admin bypass)"
 
 git checkout main >/dev/null 2>&1
 git pull --ff-only origin main >/dev/null

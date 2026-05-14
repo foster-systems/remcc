@@ -51,8 +51,12 @@ this change delivers the install half.
   schema: source ref, source sha, installed_at).
 - `templates/gh-bootstrap.sh` becomes a dependency fetched by
   `install.sh` at install time (via `git clone --depth 1` of this
-  repo at the resolved ref); it is not separately vendored.
+  repo at the resolved ref); it is not separately vendored. Gains
+  `WORKFLOW_PAT` prompt / upload / uninstall handling that mirrors
+  the existing `ANTHROPIC_API_KEY` treatment — required because
+  `opsx-apply.yml` has needed this secret since `efdee3b` and the
+  bootstrap was the only adoption-time seam still missing it.
 - `docs/SETUP.md` restructured: automated path first, manual path
-  appendix.
+  appendix. Prereq table gains a `WORKFLOW_PAT` row.
 - `README.md`: top-level pointer to the curl one-liner.
 - No changes to `apply-workflow` spec or workflow internals.

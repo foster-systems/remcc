@@ -42,3 +42,31 @@ scope here) to identify the installed version.
   resulting pull request
 - **THEN** the target repository's `main` branch contains
   `.remcc/version`
+
+### Requirement: Bootstrap installs WORKFLOW_PAT secret
+
+`gh-bootstrap.sh` SHALL prompt the operator for a fine-grained GitHub
+personal access token (or accept it via the `WORKFLOW_PAT` environment
+variable) and install it as the repository secret `WORKFLOW_PAT`. The
+PAT is required by `opsx-apply.yml`: the workflow checks out the
+change branch using this token because the default `GITHUB_TOKEN`
+cannot push changes under `.github/workflows/`, so any agent task
+that creates or edits a workflow file would otherwise fail at the
+push step. The script SHALL NOT echo the value to stdout or commit
+it to disk. The `--uninstall` path SHALL delete this secret (it does
+not revoke the PAT itself; the operator does that on GitHub).
+
+#### Scenario: Operator provides PAT interactively
+
+- **WHEN** the operator runs `gh-bootstrap.sh` without `WORKFLOW_PAT`
+  in the environment
+- **THEN** the script prompts for the PAT with input hidden, uploads
+  it as the repository secret, and the prompt names the required
+  scopes (`Contents: write`, `Workflows: write`)
+
+#### Scenario: Uninstall removes the secret
+
+- **WHEN** the operator runs `gh-bootstrap.sh --uninstall` on a target
+  where `WORKFLOW_PAT` has been installed
+- **THEN** the repository secret `WORKFLOW_PAT` is deleted and the
+  script exits zero

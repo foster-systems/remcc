@@ -36,7 +36,7 @@
       (`git clone --depth 1 -b <ref>`). Register a cleanup trap so the
       tempdir is removed on any exit.
 - [x] 3.3 Invoke the cloned `templates/gh-bootstrap.sh` against the
-      target repo, passing through `ANTHROPIC_API_KEY` /
+      target repo, passing through `ANTHROPIC_API_KEY` / `WORKFLOW_PAT` /
       `OPSX_APPLY_MODEL` / `OPSX_APPLY_EFFORT` env vars when set.
       Interactive reads inside the script use `</dev/tty` so the
       `curl … | bash -s --` shape doesn't hang.
@@ -121,3 +121,44 @@
       install.sh fetched from `/v0.1.0/install.sh`, install.sh omitted
       `--ref` and self-resolved via `releases/latest`, `source_ref`
       written as `v0.1.0`, all seven spec scenarios passed.
+
+## 9. WORKFLOW_PAT bootstrap secret (scope expansion 2026-05-14)
+
+Surfaced by task 7.4 verification: `templates/workflows/opsx-apply.yml`
+has required the `WORKFLOW_PAT` repo secret since `efdee3b`
+(2026-05-11) because `GITHUB_TOKEN` cannot push under
+`.github/workflows/`, but `templates/gh-bootstrap.sh` only ever
+prompted for `ANTHROPIC_API_KEY`. Without this section, an operator
+running `install.sh init` lands a repo whose installed workflow can't
+run. The follow-up was explicitly noted in `efdee3b`'s message and
+never closed.
+
+- [ ] 9.1 Add `read_workflow_pat_into_env`, `configure_workflow_pat_secret`,
+      `remove_workflow_pat_secret` to `templates/gh-bootstrap.sh` mirroring
+      the `ANTHROPIC_API_KEY` treatment (env-or-prompt, `gh secret set`,
+      install + uninstall paths). Prompt SHALL name the required PAT
+      scopes (`Contents: write`, `Workflows: write`).
+- [ ] 9.2 Update `install.sh` help to document the `WORKFLOW_PAT` env
+      passthrough and the bootstrap's secret-handling scope.
+- [ ] 9.3 Update `docs/SETUP.md`: add row 8 to the prereq table, add
+      step 8 to the bootstrap walk-through (renumber idempotency-smoke
+      from 9 to 10), add a row to the "Provided by the workflow" table,
+      and extend the "Removing remcc" section to mention deletion of
+      both secrets (without revoking the PAT itself).
+- [ ] 9.4 Add `WORKFLOW_PAT` requirement to the `repo-adoption` spec
+      overlay in this change (`specs/repo-adoption/spec.md`), mirroring
+      the existing `ANTHROPIC_API_KEY` requirement (operator-prompted,
+      uploaded via `gh secret set`, removed on uninstall).
+- [ ] 9.5 Update both smoke scripts to require `WORKFLOW_PAT` in the
+      environment and pass it through (smoke-init.sh exports it for
+      install.sh's gh-bootstrap.sh invocation; smoke-postmerge.sh
+      doesn't need to re-pass since step 1 doesn't re-bootstrap, but
+      its preflight should still assert the env var to fail fast).
+- [ ] 9.6 Re-run `scripts/smoke-init.sh --ref main` and
+      `scripts/smoke-postmerge.sh --ref main --cleanup` end-to-end with
+      both `ANTHROPIC_API_KEY` and `WORKFLOW_PAT` exported. Both scripts
+      MUST exit `ALL CHECKS PASSED`.
+- [ ] 9.7 Tag a follow-up release (`v0.1.1`) so the curl one-liner
+      pointed at `releases/latest` picks up the fix. Release notes SHALL
+      flag `v0.1.0` as missing the `WORKFLOW_PAT` seam (operators on
+      `v0.1.0` must `gh secret set WORKFLOW_PAT` manually).
