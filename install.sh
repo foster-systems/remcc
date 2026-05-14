@@ -275,12 +275,12 @@ resolve_target_repo() {
 }
 
 verify_clean_main() {
-  local branch
+  local subcmd="${1:-init}" branch
   branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
   [ "${branch}" = "main" ] \
-    || err "must be on branch 'main' to run init (currently on '${branch:-DETACHED}')"
+    || err "must be on branch 'main' to run ${subcmd} (currently on '${branch:-DETACHED}')"
   if [ -n "$(git status --porcelain)" ]; then
-    err "working tree is dirty; commit or stash changes before running init"
+    err "working tree is dirty; commit or stash changes before running ${subcmd}"
   fi
 }
 
@@ -773,7 +773,7 @@ cmd_upgrade() {
   verify_marker_on_main "${repo}"
 
   verify_prereqs "${repo}"
-  verify_clean_main
+  verify_clean_main upgrade
 
   ref="$(resolve_ref "${explicit_ref}")"
   log "Using remcc ref: ${ref}"

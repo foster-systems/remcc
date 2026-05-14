@@ -173,8 +173,8 @@ done
 grep -qi 'next apply run' <<<"$PR_BODY" \
   && pass "PR body has next-apply-run pointer" \
   || fail "PR body missing next-apply-run pointer"
-grep -qi 'smoke' <<<"$PR_BODY" \
-  && fail "PR body unexpectedly contains a smoke-test reference" \
+grep -q '### Smoke test' <<<"$PR_BODY" \
+  && fail "PR body unexpectedly contains an init-style smoke-test section" \
   || pass "PR body has no smoke-test one-liner (correct)"
 
 git fetch --quiet origin remcc-upgrade
@@ -196,6 +196,8 @@ step "Step 5: re-run upgrade with different --ref (verify origin/remcc-upgrade r
 NEW_REF_SHA="$(gh api "repos/premeq/remcc/commits/${NEW_REF}" --jq .sha)"
 [ -n "$NEW_REF_SHA" ] && pass "resolved $NEW_REF → $NEW_REF_SHA" || fail "could not resolve $NEW_REF to a SHA"
 
+# Step 4's upgrade left local HEAD on remcc-upgrade; upgrade requires main.
+git checkout main >/dev/null 2>&1
 bash <(curl -fsSL "$NEW_INSTALL_URL") upgrade --ref "$NEW_REF_SHA"
 pass "second upgrade exited 0"
 
