@@ -103,9 +103,11 @@
 
 ## 8. Release
 
-- [ ] 8.1 Tag a release on this repo so `install.sh`'s default ref
+- [x] 8.1 Tag a release on this repo so `install.sh`'s default ref
       resolution (`releases/latest`) returns a stable identifier rather
-      than `main`.
+      than `main`. Released `v0.1.0` on 2026-05-14 targeting `main` at
+      b70fe40; `gh api repos/premeq/remcc/releases/latest --jq .tag_name`
+      now returns `v0.1.0`.
 - [ ] 8.2 Verify the curl one-liner against the tagged release for a
       third-party operator (uses `releases/latest`, fetches the script
       from the tag, clones the tag).
