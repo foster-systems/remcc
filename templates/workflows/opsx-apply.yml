@@ -37,12 +37,30 @@ jobs:
             exit 1
           fi
 
-      - name: Verify WORKFLOW_PAT is set
+      - name: Verify REMCC_APP_ID is set
         env:
-          WORKFLOW_PAT: ${{ secrets.WORKFLOW_PAT }}
+          REMCC_APP_ID: ${{ secrets.REMCC_APP_ID }}
         run: |
-          if [ -z "${WORKFLOW_PAT}" ]; then
-            echo "::error::WORKFLOW_PAT secret is not set. The default GITHUB_TOKEN cannot push changes under .github/workflows/, so the agent needs a PAT with 'Contents: write' + 'Workflows: write' on this repo. Create one and add it via 'gh secret set WORKFLOW_PAT'." >&2
+          if [ -z "${REMCC_APP_ID}" ]; then
+            echo "::error::REMCC_APP_ID secret is not set. The opsx-apply workflow now mints a GitHub App installation token instead of using a personal access token. Run 'install.sh reconfigure' from a clone of the target repo to install the App credentials." >&2
+            exit 1
+          fi
+
+      - name: Verify REMCC_APP_PRIVATE_KEY is set
+        env:
+          REMCC_APP_PRIVATE_KEY: ${{ secrets.REMCC_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "${REMCC_APP_PRIVATE_KEY}" ]; then
+            echo "::error::REMCC_APP_PRIVATE_KEY secret is not set. The opsx-apply workflow needs the PEM-encoded private key of the remcc GitHub App to mint an installation token. Run 'install.sh reconfigure' from a clone of the target repo to install it." >&2
+            exit 1
+          fi
+
+      - name: Verify REMCC_APP_SLUG variable is set
+        env:
+          REMCC_APP_SLUG: ${{ vars.REMCC_APP_SLUG }}
+        run: |
+          if [ -z "${REMCC_APP_SLUG}" ]; then
+            echo "::error::REMCC_APP_SLUG repository variable is not set. The workflow constructs the bot's commit identity from this slug. Run 'install.sh reconfigure' from a clone of the target repo to install it." >&2
             exit 1
           fi
 
@@ -71,12 +89,31 @@ jobs:
               ;;
           esac
 
+      - name: Mint GitHub App installation token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.REMCC_APP_ID }}
+          private-key: ${{ secrets.REMCC_APP_PRIVATE_KEY }}
+
+      # If the mint step above fails, the most common cause is that the
+      # operator hasn't installed the remcc GitHub App on this repository.
+      # Point them at the App's installations page so they can fix it without
+      # digging through the action's stack trace.
+      - name: Annotate App-not-installed failure
+        if: failure() && steps.app-token.outcome == 'failure'
+        env:
+          APP_SLUG: ${{ vars.REMCC_APP_SLUG }}
+        run: |
+          echo "::error::Failed to mint a GitHub App installation token for '${APP_SLUG}'. The most common cause is that the App has not been installed on this repository. Install it at https://github.com/settings/apps/${APP_SLUG}/installations and re-run." >&2
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ github.ref }}
-          token: ${{ secrets.WORKFLOW_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Resolve change name
         id: change
@@ -190,10 +227,24 @@ jobs:
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
 
+      # Set the commit author to the remcc GitHub App's bot identity so the
+      # bot-authored commits and the PR open as the same actor. The numeric
+      # ID is required (GitHub silently rejects bot commit-author emails that
+      # don't match `<id>+<slug>[bot]@users.noreply.github.com`).
       - name: Configure git identity
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ vars.REMCC_APP_SLUG }}
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          set -euo pipefail
+          bot_login="${APP_SLUG}[bot]"
+          bot_id="$(gh api "users/${bot_login}" --jq .id)"
+          if [ -z "${bot_id}" ] || ! printf '%s' "${bot_id}" | grep -qE '^[0-9]+$'; then
+            echo "::error::Could not resolve numeric user ID for '${bot_login}'. Verify REMCC_APP_SLUG matches the App's GitHub slug." >&2
+            exit 1
+          fi
+          git config user.name "${bot_login}"
+          git config user.email "${bot_id}+${bot_login}@users.noreply.github.com"
 
       - name: Run /opsx:apply
         id: apply
@@ -317,7 +368,7 @@ jobs:
       - name: Open or update PR
         if: always() && steps.change.outputs.name != ''
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BRANCH: ${{ steps.change.outputs.branch }}
           CHANGE_NAME: ${{ steps.change.outputs.name }}
           APPLY_EXIT: ${{ steps.apply.outputs.exit_code }}

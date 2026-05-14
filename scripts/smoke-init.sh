@@ -5,7 +5,9 @@
 # second-run idempotency check).
 #
 # Usage:
-#   ANTHROPIC_API_KEY=sk-... WORKFLOW_PAT=github_pat_... \
+#   ANTHROPIC_API_KEY=sk-... \
+#   REMCC_APP_ID=12345 REMCC_APP_PRIVATE_KEY="$(cat key.pem)" \
+#   REMCC_APP_SLUG=remcc-yourname \
 #     scripts/smoke-init.sh \
 #     [--target OWNER/NAME] [--ref REF|auto] [--workdir DIR] \
 #     [--skip-setup] [--cleanup]
@@ -39,7 +41,9 @@ while [ $# -gt 0 ]; do
 done
 
 : "${ANTHROPIC_API_KEY:?must be set — install.sh passes it through to gh-bootstrap.sh}"
-: "${WORKFLOW_PAT:?must be set — install.sh passes it through to gh-bootstrap.sh (Contents:write + Workflows:write on the target repo)}"
+: "${REMCC_APP_ID:?must be set — numeric App ID for the remcc GitHub App}"
+: "${REMCC_APP_PRIVATE_KEY:?must be set — PEM-encoded private key for the remcc GitHub App}"
+: "${REMCC_APP_SLUG:?must be set — slug from the App URL (github.com/apps/<slug>)}"
 for t in gh jq pnpm git curl; do
   command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 1; }
 done
@@ -137,6 +141,32 @@ pass "first init exited 0"
 
 # Snapshot after run #1 (this is the reference state for idempotency)
 S1="$(mktemp -d)"; snapshot "$S1"
+
+# ----------------------------------------------------------------------------
+# Step 2b — verify App credentials + legacy PAT cleanup
+# Asserts the bootstrap installed the three new App config items and
+# (since this target was freshly created) no legacy WORKFLOW_PAT exists.
+# ----------------------------------------------------------------------------
+step "Step 2b: App credentials installed + legacy WORKFLOW_PAT absent"
+SECRET_NAMES="$(gh secret list --repo "$TARGET" --json name --jq '.[].name')"
+for s in REMCC_APP_ID REMCC_APP_PRIVATE_KEY; do
+  if grep -qx "$s" <<<"$SECRET_NAMES"; then
+    pass "secret $s present"
+  else
+    fail "secret $s missing"
+  fi
+done
+if grep -qx "WORKFLOW_PAT" <<<"$SECRET_NAMES"; then
+  fail "legacy WORKFLOW_PAT secret unexpectedly present on a fresh init"
+else
+  pass "no legacy WORKFLOW_PAT secret"
+fi
+SLUG_VAL="$(gh api "repos/$TARGET/actions/variables/REMCC_APP_SLUG" --jq .value 2>/dev/null || echo "")"
+if [ "$SLUG_VAL" = "$REMCC_APP_SLUG" ]; then
+  pass "variable REMCC_APP_SLUG = $SLUG_VAL"
+else
+  fail "variable REMCC_APP_SLUG mismatch (got: '$SLUG_VAL', want: '$REMCC_APP_SLUG')"
+fi
 
 # ----------------------------------------------------------------------------
 # Step 3 — verify written artifacts on remcc-init branch

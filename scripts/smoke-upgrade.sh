@@ -5,6 +5,8 @@
 #
 # Usage:
 #   ANTHROPIC_API_KEY=sk-... WORKFLOW_PAT=github_pat_... \
+#   REMCC_APP_ID=12345 REMCC_APP_PRIVATE_KEY="$(cat key.pem)" \
+#   REMCC_APP_SLUG=remcc-yourname \
 #     scripts/smoke-upgrade.sh \
 #     [--target OWNER/NAME] [--ref REF] [--old-ref REF] [--workdir DIR] \
 #     [--skip-setup] [--cleanup]
@@ -12,10 +14,12 @@
 # Defaults: --target premeq/remcc-smoke-upgrade --ref main --old-ref v0.1.1
 #           --workdir /tmp/remcc-smoke-upgrade
 #
-# The init step still requires ANTHROPIC_API_KEY and WORKFLOW_PAT (consumed by
-# gh-bootstrap.sh during init). The upgrade step itself does not — it does
-# not re-run gh-bootstrap.sh — but the harness reuses init to seed the
-# target, so both env vars are mandatory.
+# The init step (at --old-ref) requires ANTHROPIC_API_KEY and the legacy
+# WORKFLOW_PAT (consumed by the pre-v0.3.0 gh-bootstrap.sh). The reconfigure
+# step in Step 7 requires the three REMCC_APP_* env vars (consumed by the
+# new gh-bootstrap.sh, which installs the App credentials and removes the
+# legacy WORKFLOW_PAT). The harness drives the full legacy → App migration
+# end-to-end, so all five env vars are mandatory.
 
 set -euo pipefail
 
@@ -41,7 +45,10 @@ while [ $# -gt 0 ]; do
 done
 
 : "${ANTHROPIC_API_KEY:?must be set — init step passes it through to gh-bootstrap.sh}"
-: "${WORKFLOW_PAT:?must be set — init step passes it through to gh-bootstrap.sh (Contents:write + Workflows:write on the target repo)}"
+: "${WORKFLOW_PAT:?must be set — legacy init step (at --old-ref) needs the pre-v0.3.0 PAT secret}"
+: "${REMCC_APP_ID:?must be set — reconfigure step (at --ref) needs the new App credentials}"
+: "${REMCC_APP_PRIVATE_KEY:?must be set — reconfigure step (at --ref) needs the new App credentials}"
+: "${REMCC_APP_SLUG:?must be set — reconfigure step (at --ref) needs the App slug}"
 for t in gh jq pnpm git curl; do
   command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 1; }
 done
@@ -231,6 +238,74 @@ grep -qi 'already up to date' <<<"$THIRD_OUT" \
   || fail "third upgrade did not short-circuit"
 PR_AFTER="$(gh pr list --repo "$TARGET" --head remcc-upgrade --state open --json number --jq 'length')"
 [ "$PR_AFTER" = "0" ] && pass "no new remcc-upgrade PR opened" || fail "expected 0 open PRs, found $PR_AFTER"
+
+# ----------------------------------------------------------------------------
+# Step 7 — install.sh reconfigure: migrate WORKFLOW_PAT → App credentials
+# The state at this point: workflow file at NEW_REF is on main, but the
+# GitHub-side config still carries WORKFLOW_PAT (no App secrets yet). This
+# is the v0.3.0 migration scenario.
+# ----------------------------------------------------------------------------
+step "Step 7: install.sh reconfigure migrates WORKFLOW_PAT → App credentials"
+PRE_SECRETS="$(gh secret list --repo "$TARGET" --json name --jq '.[].name')"
+if grep -qx "WORKFLOW_PAT" <<<"$PRE_SECRETS"; then
+  pass "pre-reconfigure: legacy WORKFLOW_PAT present (legacy state confirmed)"
+else
+  fail "pre-reconfigure: WORKFLOW_PAT missing — expected legacy state from OLD_REF init"
+fi
+if grep -qx "REMCC_APP_ID" <<<"$PRE_SECRETS"; then
+  fail "pre-reconfigure: REMCC_APP_ID unexpectedly present before reconfigure"
+else
+  pass "pre-reconfigure: no REMCC_APP_ID yet"
+fi
+
+git checkout main >/dev/null 2>&1
+bash <(curl -fsSL "$NEW_INSTALL_URL") reconfigure --ref "$NEW_REF"
+pass "reconfigure exited 0"
+
+POST_SECRETS="$(gh secret list --repo "$TARGET" --json name --jq '.[].name')"
+for s in REMCC_APP_ID REMCC_APP_PRIVATE_KEY; do
+  if grep -qx "$s" <<<"$POST_SECRETS"; then
+    pass "post-reconfigure: secret $s present"
+  else
+    fail "post-reconfigure: secret $s missing"
+  fi
+done
+if grep -qx "WORKFLOW_PAT" <<<"$POST_SECRETS"; then
+  fail "post-reconfigure: legacy WORKFLOW_PAT still present"
+else
+  pass "post-reconfigure: legacy WORKFLOW_PAT removed"
+fi
+SLUG_VAL="$(gh api "repos/$TARGET/actions/variables/REMCC_APP_SLUG" --jq .value 2>/dev/null || echo "")"
+if [ "$SLUG_VAL" = "$REMCC_APP_SLUG" ]; then
+  pass "post-reconfigure: REMCC_APP_SLUG = $SLUG_VAL"
+else
+  fail "post-reconfigure: REMCC_APP_SLUG = '$SLUG_VAL' (expected '$REMCC_APP_SLUG')"
+fi
+
+# Reconfigure must not touch the working tree, branches, or open a PR.
+if [ -z "$(git status --porcelain)" ]; then
+  pass "reconfigure left working tree clean"
+else
+  fail "reconfigure unexpectedly left working-tree changes"
+fi
+RECONF_PR="$(gh pr list --repo "$TARGET" --state open --json headRefName --jq '[.[] | select(.headRefName == "remcc-init" or .headRefName == "remcc-upgrade")] | length')"
+[ "$RECONF_PR" = "0" ] \
+  && pass "reconfigure opened no remcc-init/remcc-upgrade PR" \
+  || fail "reconfigure unexpectedly opened a remcc-init/remcc-upgrade PR"
+
+# Idempotency: re-run reconfigure, snapshot diff against previous.
+S_BEFORE_RC="$(mktemp -d)"; snapshot "$S_BEFORE_RC"
+bash <(curl -fsSL "$NEW_INSTALL_URL") reconfigure --ref "$NEW_REF"
+pass "second reconfigure exited 0"
+S_AFTER_RC="$(mktemp -d)"; snapshot "$S_AFTER_RC"
+for n in protection rulesets actions-perms; do
+  if diff -q <(normalize "$S_BEFORE_RC/$n.json") <(normalize "$S_AFTER_RC/$n.json") >/dev/null; then
+    pass "reconfigure idempotent: $n"
+  else
+    fail "drift detected on reconfigure re-run: $n"
+  fi
+done
+rm -rf "$S_BEFORE_RC" "$S_AFTER_RC"
 
 # ----------------------------------------------------------------------------
 # Cleanup

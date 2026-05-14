@@ -16,7 +16,7 @@
 #   4. Poll the workflow until it concludes; assert success.
 #
 # Usage:
-#   ANTHROPIC_API_KEY=sk-... WORKFLOW_PAT=github_pat_... \
+#   ANTHROPIC_API_KEY=sk-... REMCC_APP_SLUG=remcc-yourname \
 #     scripts/smoke-postmerge.sh \
 #     [--target OWNER/NAME] [--workdir DIR] [--ref REF|auto] [--cleanup]
 
@@ -39,9 +39,9 @@ while [ $# -gt 0 ]; do
 done
 
 : "${ANTHROPIC_API_KEY:?must be set — smoke-test apply consumes Anthropic tokens}"
-# Not re-uploaded here (smoke-init seeded it on the target), but checked
-# so a forgotten env fails fast rather than partway through Step 4.
-: "${WORKFLOW_PAT:?must be set — same PAT smoke-init seeded as the target repo secret}"
+# Not re-uploaded here (smoke-init seeded the App secrets on the target).
+# Slug is used by the author-attribution assertion in Step 5.
+: "${REMCC_APP_SLUG:?must be set — used to verify the test-apply PR author is <slug>[bot]}"
 for t in gh jq git curl; do
   command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 1; }
 done
@@ -151,6 +151,27 @@ CONCLUSION="$(gh run view "$RUN_ID" --repo "$TARGET" --json conclusion --jq .con
 [ "$CONCLUSION" = "success" ] \
   && pass "opsx-apply concluded: success (task 7.4)" \
   || fail "opsx-apply concluded: $CONCLUSION"
+
+# ----------------------------------------------------------------------------
+# Step 5 — verify the test-apply PR is authored by the App's bot identity
+# (R3 / pr-author-github-app). A failure here means the workflow's PR-open
+# step used a token other than the minted App installation token, or the
+# slug variable was wrong.
+# ----------------------------------------------------------------------------
+step "Step 5: test-apply PR author is <REMCC_APP_SLUG>[bot]"
+APPLY_PR_NUM="$(gh pr list --repo "$TARGET" --head change/test-apply --state all --json number --jq '.[0].number // empty')"
+if [ -n "$APPLY_PR_NUM" ]; then
+  pass "test-apply PR exists (#$APPLY_PR_NUM)"
+  PR_AUTHOR="$(gh pr view "$APPLY_PR_NUM" --repo "$TARGET" --json author --jq .author.login)"
+  EXPECTED_AUTHOR="${REMCC_APP_SLUG}[bot]"
+  if [ "$PR_AUTHOR" = "$EXPECTED_AUTHOR" ]; then
+    pass "PR #$APPLY_PR_NUM author is the App: $PR_AUTHOR"
+  else
+    fail "PR #$APPLY_PR_NUM author is '$PR_AUTHOR' (expected '$EXPECTED_AUTHOR')"
+  fi
+else
+  fail "no PR found for change/test-apply"
+fi
 
 # ----------------------------------------------------------------------------
 # Cleanup

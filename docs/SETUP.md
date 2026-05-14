@@ -24,7 +24,7 @@ proceeding.
 | 5b | `package.json` at the repo root with a `packageManager: pnpm@<version>` field (consumed by `pnpm/action-setup@v4`) | `jq -r .packageManager package.json` should print `pnpm@<version>` |
 | 6 | Local tools installed: `gh`, `jq`, `git`, Node.js ≥ 20.19, `pnpm` | `gh --version && jq --version && node -v && pnpm -v` |
 | 7 | An Anthropic API key with budget configured | (key is uploaded as a repo secret in step 3 below) |
-| 8 | A fine-grained GitHub PAT with `Contents: write` + `Workflows: write` on the target repo | Create at <https://github.com/settings/personal-access-tokens/new> (PAT is uploaded as the `WORKFLOW_PAT` repo secret in step 3 below) |
+| 8 | A **remcc GitHub App** you control (created once, reused across all your adopter repos) with `Contents: write`, `Pull requests: write`, `Workflows: write`, `Metadata: read`, installed on the target repo, with a downloaded private-key PEM | See "Create the remcc GitHub App" below. (App ID, private key, and slug are uploaded in step 3 below.) |
 
 > **v1 supports pnpm-managed repos only.** The workflow runs
 > `pnpm install --frozen-lockfile`. If your repository uses npm, yarn,
@@ -32,6 +32,65 @@ proceeding.
 > package managers is deferred to a future change; until then, please
 > open an issue on the remcc repository describing your setup rather
 > than working around the constraint locally.
+
+## Create the remcc GitHub App
+
+The `opsx-apply` workflow authenticates as a dedicated GitHub App, so
+the pull request it opens is authored by `<app-slug>[bot]` — a distinct
+GitHub actor from you. This lets you code-review and merge the bot's
+PR without bypassing branch protection ("the author cannot approve
+their own PR").
+
+You create the App **once**, under your personal account (or your
+organisation), then install it on every adopter repository and reuse
+the same credentials across them.
+
+1. Open <https://github.com/settings/apps/new> (or your organisation's
+   App settings page).
+2. Fill in the form:
+   - **GitHub App name:** any unique name, e.g. `remcc-<yourname>`.
+     The lower-cased slug appears in PR-author attribution as
+     `<slug>[bot]`.
+   - **Homepage URL:** anything valid — `https://github.com/<you>` is
+     fine.
+   - **Webhook:** **uncheck "Active"**. remcc does not need webhooks;
+     a deactivated webhook avoids spurious delivery failures.
+3. Set **Repository permissions**:
+   - **Contents:** `Read and write`
+   - **Pull requests:** `Read and write`
+   - **Workflows:** `Read and write`
+   - **Metadata:** `Read-only` (selected automatically)
+4. Leave **Organization permissions** and **Account permissions** at
+   `No access`.
+5. Under **Where can this GitHub App be installed?** choose
+   `Only on this account`.
+6. Click **Create GitHub App**.
+7. On the resulting App settings page, note three values you'll need
+   later:
+   - The numeric **App ID** at the top of the page (`REMCC_APP_ID`).
+   - The slug visible in the App URL `https://github.com/apps/<slug>`
+     (`REMCC_APP_SLUG`).
+8. Scroll to **Private keys** → **Generate a private key**. A `.pem`
+   file downloads. Keep it secret — anyone with this file can act as
+   the App on every repo it's installed on. (`REMCC_APP_PRIVATE_KEY`
+   is the contents of this file.)
+9. In the left sidebar, click **Install App**, then **Install** next
+   to your account/organisation. Choose **Only select repositories**
+   and select the adopter repo (you can add more later). Click
+   **Install**.
+
+That's the one-time setup. From now on, the same `REMCC_APP_ID`,
+`REMCC_APP_PRIVATE_KEY`, and `REMCC_APP_SLUG` work for every adopter
+repo you install the App on.
+
+### Rotating the App private key
+
+If a private key is lost or potentially exposed, regenerate it from
+the App settings page (**Private keys → Generate a private key**),
+re-run `install.sh reconfigure` against each affected adopter repo
+to upload the new key, then **delete** the old key from the App
+settings page. The App's installation tokens are short-lived (1 hour)
+so the impact window is bounded even before rotation.
 
 ## Automated adoption (recommended)
 
@@ -164,6 +223,48 @@ the upgrade PR merges.
 Re-running `install.sh upgrade` while the upgrade PR is still open
 updates the existing PR's branch tip via force-with-lease rather than
 opening a duplicate.
+
+### Upgrading from a remcc release before v0.3.0
+
+remcc v0.3.0 replaced the per-operator `WORKFLOW_PAT` with a dedicated
+GitHub App. The migration is a one-time, two-step process per
+adopter repo. Before starting, complete the "Create the remcc GitHub
+App" section above — you'll need the resulting App ID, private-key
+PEM, and slug.
+
+1. **Refresh the templates.** From a clean clone of the adopter on
+   `main`:
+   ```sh
+   bash <(curl -fsSL https://raw.githubusercontent.com/premeq/remcc/main/install.sh) upgrade --ref v0.3.0
+   ```
+   Review and merge the resulting `remcc-upgrade` PR. At this point
+   the new workflow file is on `main` but it references App secrets
+   that aren't installed yet — the next apply run would fail with a
+   clear preflight error.
+2. **Install the new App credentials.** From the same clone on `main`:
+   ```sh
+   REMCC_APP_ID=12345 \
+   REMCC_APP_PRIVATE_KEY="$(cat path/to/remcc-app.private-key.pem)" \
+   REMCC_APP_SLUG=remcc-yourname \
+     bash <(curl -fsSL https://raw.githubusercontent.com/premeq/remcc/main/install.sh) reconfigure --ref v0.3.0
+   ```
+   `reconfigure` runs only the GitHub-side bootstrap — no working-tree
+   writes, no branch, no PR. The bootstrap installs the three new
+   config items and deletes the legacy `WORKFLOW_PAT` secret in the
+   same run.
+3. **Verify.** Push a `@change-apply` trigger commit on a `change/**`
+   branch and watch the resulting `opsx-apply` PR open. Its
+   `author.login` (visible in the GitHub UI and via
+   `gh pr view --json author --jq .author.login`) should be
+   `<your-app-slug>[bot]`. If it shows `github-actions[bot]` or your
+   personal username, the migration didn't complete — re-run
+   `install.sh reconfigure --ref v0.3.0`.
+4. **Revoke the old PAT.** Open
+   <https://github.com/settings/personal-access-tokens>, find the
+   fine-grained token you previously used as `WORKFLOW_PAT`, and
+   **Revoke** it. The new workflow no longer reads `WORKFLOW_PAT`
+   from anywhere, and bootstrap has already removed the repository
+   secret.
 
 ## Manual fallback
 
@@ -312,24 +413,32 @@ The script:
 7. Prompts for `ANTHROPIC_API_KEY` (input hidden) and uploads it as
    the repository secret. If the variable is already set in your
    shell, the script picks it up and does not prompt.
-8. Prompts for `WORKFLOW_PAT` (input hidden) and uploads it as the
-   repository secret. The workflow checks out the change branch
-   using this PAT because the default `GITHUB_TOKEN` cannot push
-   changes under `.github/workflows/` — any agent task that creates
-   or edits a workflow file would otherwise fail at the push step.
-   Create the PAT at <https://github.com/settings/personal-access-tokens/new>
-   as a **fine-grained** token scoped to the target repo only, with
-   permissions `Contents: write` and `Workflows: write`. If
-   `WORKFLOW_PAT` is already set in your shell, the script picks it
-   up and does not prompt.
-9. Prompts for `OPSX_APPLY_MODEL` and `OPSX_APPLY_EFFORT` — the
+8. Prompts for `REMCC_APP_ID` and `REMCC_APP_PRIVATE_KEY` (input
+   hidden) and uploads each as a repository secret. The workflow
+   exchanges these for a short-lived GitHub App installation token
+   at the start of every run, and uses that token for checkout,
+   push, and PR creation — so the bot's PR author is the App,
+   not you. See "Create the remcc GitHub App" above for how to
+   produce these values. If both variables are already set in
+   your shell (PEM via `REMCC_APP_PRIVATE_KEY="$(cat key.pem)"`),
+   the script picks them up and does not prompt.
+9. Prompts for `REMCC_APP_SLUG` (input visible — the slug is not
+   secret) and writes it as a repository **variable** (not a
+   secret). The workflow constructs the bot's commit identity
+   from this slug. Empty input is a hard error. If the variable
+   is already set in your shell, the script picks it up.
+10. If a legacy `WORKFLOW_PAT` secret is present (from a previous
+   remcc release), it is deleted now that the App credentials are
+   in place. Re-running the script when `WORKFLOW_PAT` is already
+   gone is a no-op.
+11. Prompts for `OPSX_APPLY_MODEL` and `OPSX_APPLY_EFFORT` — the
    per-repo defaults for the `/opsx:apply` step. Empty input
    leaves the variable unset, in which case the workflow's
    baked-in defaults (`sonnet` / `high`) apply. The script reads
    `OPSX_APPLY_MODEL` / `OPSX_APPLY_EFFORT` from the environment
    if set, so the prompts can be skipped in scripted runs. See
    "Configuring the apply model" below for what these knobs do.
-10. Runs an idempotency smoke test: re-applies every change and
+12. Runs an idempotency smoke test: re-applies every change and
    diffs the resulting state. A diff is a bug — please report it.
 
 Re-running the script later is a no-op.
@@ -550,7 +659,9 @@ task itself.
 | Claude Code CLI | `npm install -g @anthropic-ai/claude-code` | Invoked with `--dangerously-skip-permissions` |
 | OpenSpec CLI | `npm install -g @fission-ai/openspec@latest` | Used for the post-apply validate step |
 | `ANTHROPIC_API_KEY` | Repo secret, exposed as env | Set by `gh-bootstrap.sh`; redacted from logs by GitHub |
-| `WORKFLOW_PAT` | Repo secret, used as the `actions/checkout` token | Set by `gh-bootstrap.sh`; required because `GITHUB_TOKEN` cannot push under `.github/workflows/` |
+| `REMCC_APP_ID` | Repo secret, consumed by `actions/create-github-app-token` | Numeric GitHub App ID; set by `gh-bootstrap.sh` |
+| `REMCC_APP_PRIVATE_KEY` | Repo secret, consumed by `actions/create-github-app-token` | PEM-encoded private key of the remcc GitHub App; set by `gh-bootstrap.sh` |
+| `REMCC_APP_SLUG` | Repo **variable**, used to construct the bot's git identity | App slug (the `<slug>` in `github.com/apps/<slug>`); set by `gh-bootstrap.sh` |
 
 ### Provided by the `ubuntu-latest` image
 
@@ -642,10 +753,13 @@ remcc is reversible. To remove it from a target repository:
    This deletes any rulesets the script created, removes branch
    protection on `main`, disables secret scanning + push protection
    (where applicable), reverts the Allow-Actions-create-PRs toggle,
-   and deletes the `ANTHROPIC_API_KEY` and `WORKFLOW_PAT` repository
-   secrets. It does not touch any files in your repository (and it
-   does not revoke the PAT itself — do that at
-   <https://github.com/settings/personal-access-tokens>).
+   and deletes the `ANTHROPIC_API_KEY`, `REMCC_APP_ID`, and
+   `REMCC_APP_PRIVATE_KEY` repository secrets and the `REMCC_APP_SLUG`
+   repository variable. (Any pre-existing legacy `WORKFLOW_PAT`
+   secret is also removed.) It does not touch any files in your
+   repository, and it does not delete the GitHub App itself or
+   revoke its private key — manage those at
+   <https://github.com/settings/apps>.
 2. **Workflow file** — delete it from the repository:
    ```sh
    git rm .github/workflows/opsx-apply.yml

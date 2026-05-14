@@ -47,6 +47,78 @@ something unintended, the GitHub-side controls bound the blast radius.
 | Workflow trigger limited to `push: change/**` and `workflow_dispatch` | The agent only runs in a syntactically obvious branch namespace. Any push outside `change/**` does not trigger the agent. | Always |
 | Allow Actions to create PRs (per-repo toggle) | Permits the workflow's PR-creation step to succeed under `GITHUB_TOKEN`. Without this, the workflow fails at PR creation; with it, only the create-PR capability is exercised — the workflow does not approve PRs. | Always (`gh-bootstrap.sh` enables it) |
 
+## GitHub App credentials
+
+The workflow authenticates as a dedicated GitHub App rather than a
+per-operator personal access token. The App's installation token is
+minted at the start of every run (via `actions/create-github-app-token`),
+used for checkout, push, and PR creation, and discarded when the job
+ends. Tokens are short-lived (1 hour) and scoped to the installed
+repo only — they are **not** admin tokens.
+
+### App permissions
+
+`gh-bootstrap.sh` documents the App permissions the workflow needs:
+`Contents: write`, `Pull requests: write`, `Workflows: write`,
+`Metadata: read`. No organisation or account permissions are
+required. This is the same blast radius as a fine-grained PAT
+scoped to the target repo — narrower than a classic PAT.
+
+### Blast radius if the private key is exfiltrated
+
+The private key is the long-lived secret. An attacker with the
+`REMCC_APP_PRIVATE_KEY` can mint installation tokens for every repo
+the App is installed on. For each such repo they can:
+
+- Push to `change/**` (the branch ruleset's bypass list does **not**
+  include the App; the App is a non-admin actor, so admin-only
+  controls still hold).
+- Push under `.github/workflows/` on org repos where the push ruleset
+  blocks `.github/**` to non-admins — same answer: the ruleset
+  applies to the App. On user-owned targets without the push ruleset,
+  the substitution (operator PR review) still applies.
+- Open pull requests as `<slug>[bot]`.
+
+What the key **cannot** do, because the App has no such permissions:
+read or write Actions secrets, modify repo settings, manage
+collaborators, manage other repos the App isn't installed on, or
+escalate to admin.
+
+The credential is rotatable in seconds — see "Rotation procedure"
+below. Compared to a per-operator PAT, the App key is narrower
+(no account-level access) but installed on more repos (every
+adopter). Treat the PEM with the same care you would any
+production secret.
+
+### Rotation procedure
+
+If the private key is lost, leaked, or under suspicion:
+
+1. Open <https://github.com/settings/apps> → your remcc App →
+   **Private keys**.
+2. Click **Generate a private key**. A new `.pem` downloads.
+3. For every adopter repo, run
+   `REMCC_APP_PRIVATE_KEY="$(cat <new-key.pem>)" install.sh reconfigure`
+   to upload the new key. (The other two config items —
+   `REMCC_APP_ID` and `REMCC_APP_SLUG` — are unchanged.)
+4. Back on the App settings page, click the **trash icon** next to
+   the **old** key to revoke it. From this point on, any installation
+   token previously minted from the old key still works until it
+   naturally expires (≤ 1 hour); no new tokens can be minted.
+
+The rotation does not require touching the workflow file or
+re-installing the App on the repos.
+
+### Why this beats a per-operator PAT
+
+A fine-grained PAT belongs to a human GitHub account, scopes to that
+account's repo permissions, and (under "PR author cannot approve the
+same PR" rules) blocks the operator from reviewing the bot's PRs.
+The App identity is a separate actor: the operator (admin on the
+adopter repo) can code-review and approve the App's PRs and merge
+through normal branch protection. The R3 unlock is the primary
+motivation; the credential-shape improvement is the secondary win.
+
 ## Limitations on user-owned and private-without-GHAS repositories
 
 Two of the Layer 2 controls in the table above are not universally
