@@ -17,9 +17,9 @@ Push a `change/<name>` branch carrying an [OpenSpec](https://github.com/Fission-
 
 ## Why remcc
 
-- **No laptop tether.** The Claude Code loop runs on a GitHub-hosted runner, so changes proceed while you do something else.
-- **Normal PR review.** Output lands as a branch + PR; the usual review, CI, and branch-protection guardrails apply.
-- **Tight safety boundary.** The bot authenticates as a GitHub App scoped to `change/**`, `main` is branch-protected, and a `change/**` ruleset blocks force-push and deletion.
+- **No laptop tether.** The Claude Code loop runs on a GitHub-hosted runner, while you do something else.
+- **Normal PR review.** Output lands as a branch + PR; the usual review, CI, and branch-protection.
+- **Tight safety boundary.** Claude Code runs in an ephemeral sandbox.
 
 ## Quickstart
 
