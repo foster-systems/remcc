@@ -45,6 +45,6 @@
 
 - [x] 6.1 Tick R3 in `openspec/ROADMAP.md` with a reference to this change.
 - [x] 6.2 Run `openspec validate pr-author-github-app --strict` and address any new issues.
-- [ ] 6.3 Run the full smoke matrix (init, upgrade, reconfigure, postmerge) against `premeq/remcc-smoke-init` / `premeq/remcc-smoke-upgrade`. Confirm assertions pass and the test-apply PR is authored by the App.
+- [x] 6.3 Run the full smoke matrix (init, upgrade, reconfigure, postmerge) against `premeq/remcc-smoke-init` / `premeq/remcc-smoke-upgrade`. Confirm assertions pass and the test-apply PR is authored by the App.
 - [ ] 6.4 Open the PR for this change. Once merged, cut release `v0.3.0` (BREAKING — adopters MUST migrate per SETUP.md).
 - [ ] 6.5 Archive this change via `openspec archive pr-author-github-app`.
