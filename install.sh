@@ -13,9 +13,10 @@
 # Subcommands:
 #   init          adopt remcc in the current working directory's repo
 #   upgrade       refresh template-managed files in an already-adopted repo
+#   reconfigure   re-run the GitHub-side bootstrap on an already-adopted repo
 #   --help        show this message
 #
-# Options (init, upgrade):
+# Options (init, upgrade, reconfigure):
 #   --ref <ref>   remcc tag or commit to fetch templates from. Defaults to
 #                 the latest release tag on premeq/remcc, falling back to
 #                 'main' with a warning if no releases exist.
@@ -80,11 +81,15 @@ Usage:
   install.sh --help
 
 Subcommands:
-  init      Adopt remcc in the current repository (prereq check, GitHub-side
-            bootstrap, template-file install, pull request).
-  upgrade   Refresh template-managed files in an already-adopted repo at a
-            newer remcc ref. Skips bootstrap (one-time `init` work). Opens
-            a pull request on branch `remcc-upgrade`.
+  init         Adopt remcc in the current repository (prereq check, GitHub-side
+               bootstrap, template-file install, pull request).
+  upgrade      Refresh template-managed files in an already-adopted repo at a
+               newer remcc ref. Skips bootstrap (one-time `init` work). Opens
+               a pull request on branch `remcc-upgrade`.
+  reconfigure  Re-run only the GitHub-side bootstrap against an already-
+               adopted repo. Does NOT touch the working tree, create a
+               branch, or open a pull request. Use after an upgrade that
+               changed bootstrap-managed config.
 
 Run `install.sh <subcommand> --help` for subcommand-specific help.
 USAGE
@@ -108,7 +113,8 @@ Behavior:
   2. Resolves a remcc ref and shallow-clones premeq/remcc at that ref
      into a tempdir (cleaned up on exit).
   3. Runs the cloned gh-bootstrap.sh against the target repo (branch
-     protection, rulesets, ANTHROPIC_API_KEY + WORKFLOW_PAT secrets, apply
+     protection, rulesets, ANTHROPIC_API_KEY + REMCC_APP_ID +
+     REMCC_APP_PRIVATE_KEY secrets, REMCC_APP_SLUG variable, apply
      configuration variables). Idempotent on re-run.
   4. Writes template-managed files (overwrites any existing copies):
        .github/workflows/opsx-apply.yml
@@ -125,14 +131,15 @@ init prints "already up to date" and exits zero without creating a
 branch or PR.
 
 Environment passthrough (consumed by gh-bootstrap.sh):
-  ANTHROPIC_API_KEY     Anthropic API key (prompted if unset).
-  WORKFLOW_PAT          Fine-grained PAT with Contents:write + Workflows:write
-                        on the target repo. Required by opsx-apply.yml because
-                        GITHUB_TOKEN cannot push under .github/workflows/.
-                        Create at https://github.com/settings/personal-access-tokens/new.
-                        Prompted if unset.
-  OPSX_APPLY_MODEL      Per-repo default Claude model alias.
-  OPSX_APPLY_EFFORT     Per-repo default thinking-budget level.
+  ANTHROPIC_API_KEY      Anthropic API key (prompted if unset).
+  REMCC_APP_ID           Numeric GitHub App ID of the remcc App
+                         (prompted if unset).
+  REMCC_APP_PRIVATE_KEY  PEM-encoded private key of the remcc GitHub App
+                         (prompted if unset; multi-line, accepted via stdin).
+  REMCC_APP_SLUG         GitHub App slug (the <slug> in github.com/apps/<slug>;
+                         prompted if unset).
+  OPSX_APPLY_MODEL       Per-repo default Claude model alias.
+  OPSX_APPLY_EFFORT      Per-repo default thinking-budget level.
 USAGE
 }
 
@@ -174,6 +181,49 @@ Behavior:
 
 `upgrade` does NOT re-run `gh-bootstrap.sh`. Branch protection,
 rulesets, secrets, and repository variables are one-time `init` work.
+If a release ships changes to bootstrap-managed config (e.g. new
+secrets), use `install.sh reconfigure` after the upgrade PR merges.
+USAGE
+}
+
+usage_reconfigure() {
+  cat <<'USAGE'
+install.sh reconfigure — re-run the GitHub-side bootstrap on an adopted repo.
+
+Usage:
+  install.sh reconfigure [--ref <tag-or-sha>] [--help]
+
+Options:
+  --ref <ref>   remcc tag or commit to fetch the bootstrap script from.
+                Defaults to the latest release tag on premeq/remcc, falling
+                back to 'main' with a warning if no releases exist.
+
+Behavior:
+  1. Verifies the target was previously adopted: `.remcc/version` must
+     exist on `origin/main`. If it does not, the command exits non-zero
+     pointing at `install.sh init`.
+  2. Re-runs the same prerequisite checks as `init` and `upgrade`.
+  3. Resolves a remcc ref and shallow-clones premeq/remcc at that ref
+     into a tempdir (cleaned up on exit).
+  4. Runs ONLY the cloned `gh-bootstrap.sh` against the target repo.
+     Idempotent on re-run.
+
+`install.sh reconfigure` does NOT touch the working tree, write a
+version marker, create a branch, or open a pull request. It is the
+explicit re-bootstrap entry point — use it after a remcc release that
+changed bootstrap-managed config (e.g. the v0.3.0 GitHub App
+migration; see `docs/SETUP.md`).
+
+Environment passthrough (consumed by gh-bootstrap.sh):
+  ANTHROPIC_API_KEY      Anthropic API key (prompted if unset).
+  REMCC_APP_ID           Numeric GitHub App ID of the remcc App
+                         (prompted if unset).
+  REMCC_APP_PRIVATE_KEY  PEM-encoded private key of the remcc GitHub App
+                         (prompted if unset; multi-line, accepted via stdin).
+  REMCC_APP_SLUG         GitHub App slug (the <slug> in github.com/apps/<slug>;
+                         prompted if unset).
+  OPSX_APPLY_MODEL       Per-repo default Claude model alias.
+  OPSX_APPLY_EFFORT      Per-repo default thinking-budget level.
 USAGE
 }
 
@@ -830,6 +880,43 @@ cmd_upgrade() {
 }
 
 # ----------------------------------------------------------------------------
+# `reconfigure` orchestration.
+# ----------------------------------------------------------------------------
+
+cmd_reconfigure() {
+  local explicit_ref=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) usage_reconfigure; exit 0 ;;
+      --ref) shift; [ $# -gt 0 ] || err "--ref requires a value"; explicit_ref="$1"; shift ;;
+      --ref=*) explicit_ref="${1#--ref=}"; shift ;;
+      *) err "unknown option to reconfigure: $1" ;;
+    esac
+  done
+
+  local repo ref
+  repo="$(resolve_target_repo)"
+  log "Target repository: ${repo}"
+
+  # Marker-on-main must come first so an un-adopted target is rejected
+  # before any other GitHub or filesystem work runs.
+  verify_marker_on_main "${repo}"
+
+  verify_prereqs "${repo}"
+  verify_clean_main reconfigure
+
+  ref="$(resolve_ref "${explicit_ref}")"
+  log "Using remcc ref: ${ref}"
+  clone_remcc_at "${ref}"
+
+  # Run ONLY the GitHub-side bootstrap. No working-tree writes, no
+  # version-marker update, no branch, no PR — that's the contract.
+  run_bootstrap
+
+  log "Done. Reconfigure complete for ${repo}."
+}
+
+# ----------------------------------------------------------------------------
 # Dispatch.
 # ----------------------------------------------------------------------------
 
@@ -838,6 +925,7 @@ main() {
     ''|-h|--help|help) usage_root; exit 0 ;;
     init) shift; cmd_init "$@" ;;
     upgrade) shift; cmd_upgrade "$@" ;;
+    reconfigure) shift; cmd_reconfigure "$@" ;;
     *) printf 'unknown subcommand: %s\n\n' "$1" >&2; usage_root >&2; exit 1 ;;
   esac
 }

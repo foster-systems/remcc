@@ -124,6 +124,13 @@ override — no GitHub UI step, no context-switch out of the
 terminal. The PR comment for the new run reports `model=opus`
 and the source as `commit trailer Opsx-Model`.
 
+## GitHub App credentials
+
+remcc authenticates as a GitHub App you create under your account.
+GitHub Apps and their installations are **free** — they do not consume
+a paid GitHub seat, do not add per-installation charges, and do not
+count against any organisation seat budget. Setup cost: zero.
+
 ## GitHub Actions runner minutes
 
 Each `/opsx:apply` run consumes GitHub-hosted Ubuntu runner minutes

@@ -16,11 +16,20 @@
 #     bot is therefore unable to rewrite CI; the operator (admin) bypasses.
 #   - Secret scanning + secret push protection on the repository.
 #   - The repository secret ANTHROPIC_API_KEY (prompted or read from env).
-#   - The repository secret WORKFLOW_PAT (prompted or read from env). The
-#     `opsx-apply` workflow checks out via this PAT because the default
-#     GITHUB_TOKEN cannot push changes under `.github/workflows/`. Create
-#     it at https://github.com/settings/personal-access-tokens/new with
-#     `Contents: write` + `Workflows: write` on the target repo only.
+#   - The repository secrets REMCC_APP_ID and REMCC_APP_PRIVATE_KEY (prompted
+#     or read from env). The `opsx-apply` workflow exchanges these for a
+#     short-lived GitHub App installation token at the start of every run,
+#     and uses it for checkout, push, and PR creation — so the workflow's
+#     PR author is the App's bot identity, not the operator. Create the App
+#     under your account at https://github.com/settings/apps/new with
+#     permissions `Contents: write`, `Pull requests: write`, `Workflows: write`,
+#     `Metadata: read`, install it on the target repo, then download the
+#     private-key PEM and pass it here.
+#   - The repository variable REMCC_APP_SLUG (prompted or read from env).
+#     The workflow constructs the bot's commit identity from this slug
+#     (`<slug>[bot]`).
+#   - Any pre-existing legacy `WORKFLOW_PAT` secret is removed once the App
+#     secrets are installed (the workflow no longer reads it).
 #   - The repository variables OPSX_APPLY_MODEL and OPSX_APPLY_EFFORT, which
 #     set per-repo defaults for the /opsx:apply step. Each is prompted or
 #     read from an env var of the same name; empty input leaves the variable
@@ -349,45 +358,133 @@ remove_anthropic_secret() {
 }
 
 # ----------------------------------------------------------------------------
-# WORKFLOW_PAT repository secret
+# remcc GitHub App credentials
 #
-# Required by templates/workflows/opsx-apply.yml: the workflow checks out
-# with this PAT because GITHUB_TOKEN cannot push changes under
-# `.github/workflows/`, so any agent task that touches a workflow file
-# would otherwise fail at the push step. PAT needs `Contents: write` +
-# `Workflows: write` on the target repo only (fine-grained, repo-scoped).
+# The opsx-apply workflow authenticates as a dedicated GitHub App per run
+# rather than a per-operator PAT. The three config items together identify
+# the App:
+#   - REMCC_APP_ID            (secret)   numeric App ID
+#   - REMCC_APP_PRIVATE_KEY   (secret)   multi-line PEM
+#   - REMCC_APP_SLUG          (variable) lower-case slug from the App's URL
+# An empty private key or slug is a hard error — the workflow needs both.
 # ----------------------------------------------------------------------------
 
-read_workflow_pat_into_env() {
-  if [ -n "${WORKFLOW_PAT:-}" ]; then
+read_remcc_app_id_into_env() {
+  if [ -n "${REMCC_APP_ID:-}" ]; then
     return 0
   fi
-  printf 'Enter WORKFLOW_PAT (fine-grained PAT with Contents:write + Workflows:write on this repo; input hidden): ' >&2
-  local pat=""
+  printf 'Enter REMCC_APP_ID (numeric App ID from your GitHub App settings page; input hidden): ' >&2
+  local app_id=""
   if [ -t 0 ]; then
     stty -echo
-    IFS= read -r pat
+    IFS= read -r app_id
     stty echo
     printf '\n' >&2
   else
-    IFS= read -r pat
+    IFS= read -r app_id
   fi
-  [ -n "${pat}" ] || err "WORKFLOW_PAT was empty"
-  export WORKFLOW_PAT="${pat}"
+  [ -n "${app_id}" ] || err "REMCC_APP_ID was empty"
+  export REMCC_APP_ID="${app_id}"
 }
 
-configure_workflow_pat_secret() {
+# Read a multi-line PEM into REMCC_APP_PRIVATE_KEY. Terminated by an empty
+# line — safe because standard RSA/PKCS PEMs have no internal blank lines.
+# Input echo is suppressed when stdin is a TTY.
+read_remcc_app_private_key_into_env() {
+  if [ -n "${REMCC_APP_PRIVATE_KEY:-}" ]; then
+    return 0
+  fi
+  printf 'Enter REMCC_APP_PRIVATE_KEY (paste the PEM, then a blank line; input hidden):\n' >&2
+  local line key=""
+  if [ -t 0 ]; then
+    stty -echo
+  fi
+  while IFS= read -r line; do
+    [ -z "${line}" ] && break
+    if [ -z "${key}" ]; then
+      key="${line}"
+    else
+      key="${key}
+${line}"
+    fi
+  done
+  if [ -t 0 ]; then
+    stty echo
+    printf '\n' >&2
+  fi
+  [ -n "${key}" ] || err "REMCC_APP_PRIVATE_KEY was empty"
+  export REMCC_APP_PRIVATE_KEY="${key}"
+}
+
+configure_remcc_app_secrets() {
   local repo="$1"
-  log "Repository secret WORKFLOW_PAT (${repo})"
-  read_workflow_pat_into_env
-  printf '%s' "${WORKFLOW_PAT}" \
-    | gh secret set WORKFLOW_PAT --repo "${repo}" >/dev/null
+  log "Repository secrets REMCC_APP_ID + REMCC_APP_PRIVATE_KEY (${repo})"
+  sub "remcc GitHub App permissions required: Contents:write, Pull requests:write, Workflows:write, Metadata:read"
+  read_remcc_app_id_into_env
+  read_remcc_app_private_key_into_env
+  # Piping via stdin preserves the multi-line PEM byte-for-byte; `gh secret
+  # set --body` would mangle newlines.
+  printf '%s' "${REMCC_APP_ID}" \
+    | gh secret set REMCC_APP_ID --repo "${repo}" >/dev/null
+  printf '%s' "${REMCC_APP_PRIVATE_KEY}" \
+    | gh secret set REMCC_APP_PRIVATE_KEY --repo "${repo}" >/dev/null
   sub "uploaded"
 }
 
-remove_workflow_pat_secret() {
+remove_remcc_app_secrets() {
+  local repo="$1" name
+  log "Removing repository secrets REMCC_APP_ID + REMCC_APP_PRIVATE_KEY (${repo})"
+  for name in REMCC_APP_ID REMCC_APP_PRIVATE_KEY; do
+    if gh secret list --repo "${repo}" --json name --jq '.[].name' \
+         | grep -qx "${name}"; then
+      gh secret delete "${name}" --repo "${repo}" >/dev/null
+      sub "${name} removed"
+    else
+      sub "${name} already absent"
+    fi
+  done
+}
+
+read_remcc_app_slug_into_env() {
+  if [ -n "${REMCC_APP_SLUG:-}" ]; then
+    return 0
+  fi
+  if [ -t 0 ]; then
+    printf 'Enter REMCC_APP_SLUG (the slug from the App URL github.com/apps/<slug>; visible): ' >&2
+    IFS= read -r REMCC_APP_SLUG || REMCC_APP_SLUG=""
+  else
+    IFS= read -r REMCC_APP_SLUG || REMCC_APP_SLUG=""
+  fi
+  [ -n "${REMCC_APP_SLUG:-}" ] \
+    || err "REMCC_APP_SLUG was empty (the workflow needs the slug to construct the bot's git identity)"
+  export REMCC_APP_SLUG
+}
+
+configure_remcc_app_slug_variable() {
   local repo="$1"
-  log "Removing repository secret WORKFLOW_PAT (${repo})"
+  log "Repository variable REMCC_APP_SLUG (${repo})"
+  read_remcc_app_slug_into_env
+  set_repo_variable "${repo}" REMCC_APP_SLUG "${REMCC_APP_SLUG}"
+}
+
+remove_remcc_app_slug_variable() {
+  local repo="$1"
+  log "Removing repository variable REMCC_APP_SLUG (${repo})"
+  if gh api "repos/${repo}/actions/variables/REMCC_APP_SLUG" --silent >/dev/null 2>&1; then
+    gh variable delete REMCC_APP_SLUG --repo "${repo}" >/dev/null
+    sub "removed"
+  else
+    sub "already absent"
+  fi
+}
+
+# Remove the legacy WORKFLOW_PAT secret left over from pre-App adopters.
+# Runs AFTER the new App secrets are confirmed installed (see install_remcc)
+# so a failed migration leaves the legacy PAT in place and the old workflow
+# keeps working.
+remove_workflow_pat_legacy() {
+  local repo="$1"
+  log "Removing legacy WORKFLOW_PAT secret if present (${repo})"
   if gh secret list --repo "${repo}" --json name --jq '.[].name' \
        | grep -qx WORKFLOW_PAT; then
     gh secret delete WORKFLOW_PAT --repo "${repo}" >/dev/null
@@ -493,7 +590,7 @@ remove_apply_config_variables() {
 # ----------------------------------------------------------------------------
 
 snapshot_state() {
-  local repo="$1" bid pid name
+  local repo="$1" bid pid name secret_names
   echo "# branch protection on main"
   gh api "repos/${repo}/branches/main/protection" 2>/dev/null \
     | jq 'del(.url, .self_link, .urls)' || true
@@ -513,6 +610,22 @@ snapshot_state() {
   gh api "repos/${repo}" --jq '.security_and_analysis' 2>/dev/null || true
   echo "# actions workflow permissions"
   gh api "repos/${repo}/actions/permissions/workflow" 2>/dev/null || true
+  echo "# remcc App secrets (presence only — values are never read back)"
+  secret_names="$(gh secret list --repo "${repo}" --json name --jq '.[].name' 2>/dev/null || true)"
+  for name in REMCC_APP_ID REMCC_APP_PRIVATE_KEY WORKFLOW_PAT; do
+    if printf '%s\n' "${secret_names}" | grep -qx "${name}"; then
+      echo "{\"name\":\"${name}\",\"present\":true}"
+    else
+      echo "{\"name\":\"${name}\",\"present\":false}"
+    fi
+  done
+  echo "# remcc App slug variable"
+  if gh api "repos/${repo}/actions/variables/REMCC_APP_SLUG" --silent >/dev/null 2>&1; then
+    gh api "repos/${repo}/actions/variables/REMCC_APP_SLUG" \
+      | jq '{name, value}' || true
+  else
+    echo "{\"name\":\"REMCC_APP_SLUG\",\"value\":null}"
+  fi
   echo "# apply configuration variables"
   for name in OPSX_APPLY_MODEL OPSX_APPLY_EFFORT; do
     if gh api "repos/${repo}/actions/variables/${name}" --silent >/dev/null 2>&1; then
@@ -533,6 +646,8 @@ run_idempotency_smoke_test() {
   configure_push_ruleset "${repo}"
   configure_secret_scanning "${repo}"
   configure_actions_pr_creation "${repo}"
+  configure_remcc_app_slug_variable "${repo}"
+  remove_workflow_pat_legacy "${repo}"
   configure_apply_config_variables "${repo}"
   after="$(snapshot_state "${repo}")"
   if [ "${before}" = "${after}" ]; then
@@ -557,10 +672,14 @@ Usage:
   bash gh-bootstrap.sh --uninstall    revert remcc-managed configuration
   bash gh-bootstrap.sh --help         show this message
 
-The install path will prompt for ANTHROPIC_API_KEY and WORKFLOW_PAT unless they
-are already set in the environment. WORKFLOW_PAT must be a fine-grained PAT
-with Contents:write + Workflows:write on the target repo; the workflow uses it
-to check out and push because GITHUB_TOKEN cannot modify .github/workflows/.
+The install path will prompt for ANTHROPIC_API_KEY, REMCC_APP_ID,
+REMCC_APP_PRIVATE_KEY, and REMCC_APP_SLUG unless they are already set in the
+environment. The three REMCC_APP_* values identify a GitHub App the operator
+has created (one-time, per docs/SETUP.md) with permissions Contents:write,
+Pull requests:write, Workflows:write, Metadata:read, installed on the target
+repo. The workflow mints a short-lived installation token from these
+credentials and uses it for checkout, push, and PR creation — so the bot's
+PR author is the App, not the operator.
 
 The uninstall path does not delete repository content; it only reverses the
 GitHub-side configuration this script applies.
@@ -579,7 +698,12 @@ install_remcc() {
   configure_secret_scanning "${repo}"
   configure_actions_pr_creation "${repo}"
   configure_anthropic_secret "${repo}"
-  configure_workflow_pat_secret "${repo}"
+  configure_remcc_app_secrets "${repo}"
+  configure_remcc_app_slug_variable "${repo}"
+  # Only after the App secrets and slug variable land successfully do we
+  # remove the legacy WORKFLOW_PAT — a failed App install leaves the legacy
+  # PAT in place so the old workflow keeps working.
+  remove_workflow_pat_legacy "${repo}"
   configure_apply_config_variables "${repo}"
   run_idempotency_smoke_test "${repo}"
 
@@ -598,7 +722,11 @@ uninstall_remcc() {
   disable_secret_scanning "${repo}"
   disable_actions_pr_creation "${repo}"
   remove_anthropic_secret "${repo}"
-  remove_workflow_pat_secret "${repo}"
+  remove_remcc_app_secrets "${repo}"
+  remove_remcc_app_slug_variable "${repo}"
+  # Cover legacy adopters whose state still carries WORKFLOW_PAT (uninstall
+  # on a repo that was never migrated should still be a clean wipe).
+  remove_workflow_pat_legacy "${repo}"
   remove_apply_config_variables "${repo}"
 
   log "Uninstall complete for ${repo}"
