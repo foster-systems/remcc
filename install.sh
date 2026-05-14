@@ -321,8 +321,16 @@ clone_remcc_at() {
   local ref="$1"
   REMCC_SRC_DIR="$(mktemp -d -t remcc-src-XXXXXX)"
   log "Fetching remcc@${ref} into ${REMCC_SRC_DIR}"
-  git clone --quiet --depth 1 --branch "${ref}" "${REMCC_CLONE_URL}" "${REMCC_SRC_DIR}" \
-    || err "git clone of ${REMCC_REPO}@${ref} failed"
+  # `git clone --branch` rejects raw commit SHAs; use init + fetch + checkout
+  # so the same code path serves tags, branches, and SHAs (the documented
+  # forms of --ref). GitHub's allowReachableSHA1InWant permits SHA fetches.
+  (
+    cd "${REMCC_SRC_DIR}" \
+      && git init --quiet \
+      && git remote add origin "${REMCC_CLONE_URL}" \
+      && git fetch --quiet --depth 1 origin "${ref}" \
+      && git checkout --quiet FETCH_HEAD
+  ) || err "git clone of ${REMCC_REPO}@${ref} failed"
   sub "ok"
 }
 

@@ -73,6 +73,7 @@ normalize() {
 # ----------------------------------------------------------------------------
 if [ "$SKIP_SETUP" = 0 ]; then
   step "Setup: create $TARGET, seed prereqs in $WORKDIR"
+  rm -rf "$WORKDIR"  # wipe stale clone from a prior failed run
   gh repo create "$TARGET" --private --add-readme
   gh repo clone "$TARGET" "$WORKDIR"
   cd "$WORKDIR"
