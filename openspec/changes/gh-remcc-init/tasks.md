@@ -20,9 +20,12 @@
       `pnpm`).
 - [x] 2.2 On any prereq failure: print which check failed, exit non-zero, and
       ensure no `gh api` mutating call has been issued and no files written.
-- [ ] 2.3 Manual test: run `install.sh init` in a repo missing `pnpm-lock.yaml`;
+- [x] 2.3 Manual test: run `install.sh init` in a repo missing `pnpm-lock.yaml`;
       confirm failure mode matches spec scenario "Missing pnpm-lock.yaml is
-      detected before mutation".
+      detected before mutation". Verified 2026-05-14 against
+      `premeq/remcc-pnpm-test`: exit 1, message `pnpm-lock.yaml not found
+      at repo root`, zero rulesets / secrets / variables / protection
+      applied, no template files written.
 
 ## 3. Ref resolution and clone
 
@@ -37,8 +40,10 @@
       `OPSX_APPLY_MODEL` / `OPSX_APPLY_EFFORT` env vars when set.
       Interactive reads inside the script use `</dev/tty` so the
       `curl … | bash -s --` shape doesn't hang.
-- [ ] 3.4 Manual test: run `install.sh init` twice against the same repo;
-      confirm no GitHub-side config diff between runs.
+- [x] 3.4 Manual test: run `install.sh init` twice against the same repo;
+      confirm no GitHub-side config diff between runs. Covered by
+      `scripts/smoke-init.sh` Step 6 (protection / rulesets / actions-perms
+      snapshots compared pre- vs post-second-run).
 
 ## 4. Template installation
 
@@ -82,11 +87,12 @@
 
 ## 7. End-to-end verification
 
-- [ ] 7.1 Smoke-test `install.sh init` against a throwaway fresh target
+- [x] 7.1 Smoke-test `install.sh init` against a throwaway fresh target
       repo. Verify each `remcc-cli` spec scenario passes: install/help,
       prereq check, bootstrap idempotency, file overwrite + PR diff,
       version marker, PR opened with file list and pre-existing flags,
-      no apply run triggered.
+      no apply run triggered. Codified as `scripts/smoke-init.sh`; passed
+      against `premeq/remcc-smoke` on 2026-05-14.
 - [ ] 7.2 Smoke-test against a target that already has a customized
       `.claude/settings.json`; verify the PR body flags it and the diff
       surfaces the overwrite.
