@@ -67,18 +67,28 @@ fail() { printf '  FAIL  %s\n' "$*"; FAILED=1; }
 # ----------------------------------------------------------------------------
 # Step 1 — merge the open remcc-init PR
 # ----------------------------------------------------------------------------
-step "Step 1: merge remcc-init PR"
+step "Step 1: merge remcc-init PR (or confirm it was already merged)"
 cd "$WORKDIR"
 
+# smoke-init.sh Step 7 merges the remcc-init PR itself to test
+# post-merge installed_at preservation. If it ran, the PR is already
+# gone — that's the expected steady state, not a missing prereq.
 PR_NUM="$(gh pr list --repo "$TARGET" --head remcc-init --state open --json number --jq '.[0].number // empty')"
-[ -n "$PR_NUM" ] || { echo "no open remcc-init PR on $TARGET — run scripts/smoke-init.sh first" >&2; exit 1; }
-
-# --admin: the ruleset install.sh seeds restricts updates on all branches
-# except change/**; admins bypass via RepositoryRole. The smoke seed user
-# owns the target repo, so this matches the real operator-merging-own-PR
-# path.
-gh pr merge "$PR_NUM" --repo "$TARGET" --squash --delete-branch --admin >/dev/null
-pass "merged PR #$PR_NUM (squash + delete branch, admin bypass)"
+if [ -n "$PR_NUM" ]; then
+  # --admin: ruleset restricts non-change/** updates; admins bypass via
+  # RepositoryRole. Smoke seed user owns the target, matching the real
+  # operator-merging-own-PR path.
+  gh pr merge "$PR_NUM" --repo "$TARGET" --squash --delete-branch --admin >/dev/null
+  pass "merged PR #$PR_NUM (squash + delete branch, admin bypass)"
+else
+  MERGED_PR="$(gh pr list --repo "$TARGET" --head remcc-init --state merged --json number --jq '.[0].number // empty')"
+  if [ -n "$MERGED_PR" ]; then
+    pass "remcc-init PR #$MERGED_PR already merged (likely by smoke-init Step 7)"
+  else
+    echo "no remcc-init PR (open or merged) on $TARGET — run scripts/smoke-init.sh first" >&2
+    exit 1
+  fi
+fi
 
 git checkout main >/dev/null 2>&1
 git pull --ff-only origin main >/dev/null
@@ -158,16 +168,17 @@ CONCLUSION="$(gh run view "$RUN_ID" --repo "$TARGET" --json conclusion --jq .con
 # step used a token other than the minted App installation token, or the
 # slug variable was wrong.
 # ----------------------------------------------------------------------------
-step "Step 5: test-apply PR author is <REMCC_APP_SLUG>[bot]"
+step "Step 5: test-apply PR author is the App (app/<REMCC_APP_SLUG> or <REMCC_APP_SLUG>[bot])"
 APPLY_PR_NUM="$(gh pr list --repo "$TARGET" --head change/test-apply --state all --json number --jq '.[0].number // empty')"
 if [ -n "$APPLY_PR_NUM" ]; then
   pass "test-apply PR exists (#$APPLY_PR_NUM)"
   PR_AUTHOR="$(gh pr view "$APPLY_PR_NUM" --repo "$TARGET" --json author --jq .author.login)"
-  EXPECTED_AUTHOR="${REMCC_APP_SLUG}[bot]"
-  if [ "$PR_AUTHOR" = "$EXPECTED_AUTHOR" ]; then
+  # gh CLI returns App authors as 'app/<slug>'; the GitHub web UI shows
+  # '<slug>[bot]'. Both identify the same App identity — accept either.
+  if [ "$PR_AUTHOR" = "app/${REMCC_APP_SLUG}" ] || [ "$PR_AUTHOR" = "${REMCC_APP_SLUG}[bot]" ]; then
     pass "PR #$APPLY_PR_NUM author is the App: $PR_AUTHOR"
   else
-    fail "PR #$APPLY_PR_NUM author is '$PR_AUTHOR' (expected '$EXPECTED_AUTHOR')"
+    fail "PR #$APPLY_PR_NUM author is '$PR_AUTHOR' (expected 'app/${REMCC_APP_SLUG}' or '${REMCC_APP_SLUG}[bot]')"
   fi
 else
   fail "no PR found for change/test-apply"
