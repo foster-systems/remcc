@@ -13,7 +13,7 @@ Run Claude Code unattended — push a change branch, get a PR.
 
 </div>
 
-Push a `change/<name>` branch carrying an [OpenSpec](https://github.com/Fission-AI/OpenSpec) proposal and an `@change-apply` opt-in commit; remcc runs `/opsx:apply` with [Claude Code](https://claude.com/claude-code) on a GitHub-hosted runner and opens a pull request for normal review.
+Push a `change/<name>` branch carrying an [OpenSpec](https://github.com/Fission-AI/OpenSpec) proposal and an `@change-apply` opt-in commit; remcc runs `/opsx:apply` with [Claude Code](https://claude.com/claude-code) on a GitHub-hosted runner and opens a pull request for your review.
 
 ## Why remcc
 
@@ -25,9 +25,9 @@ Push a `change/<name>` branch carrying an [OpenSpec](https://github.com/Fission-
 
 ### 1. Prerequisites
 
+- An [OpenSpec](https://github.com/Fission-AI/OpenSpec)-initialised, pnpm-managed repo with `.claude/` committed
 - A `remcc` GitHub App installed on the target repo
 - An Anthropic API key with budget
-- An OpenSpec-initialised, pnpm-managed repo with `.claude/` committed
 
 Full checklist: [docs/SETUP.md#prerequisites](docs/SETUP.md#prerequisites).
 
