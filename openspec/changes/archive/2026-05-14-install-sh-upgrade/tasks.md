@@ -156,13 +156,34 @@
 
 ## 8. Release
 
-- [ ] 8.1 Tag a release on this repo (`v0.2.0`) so the curl one-liner
+- [x] 8.1 Tag a release on this repo (`v0.2.0`) so the curl one-liner
       pointed at `releases/latest` ships the `upgrade` subcommand.
       Release notes SHALL flag this as the first release containing
       `upgrade` and link to the docs section.
       (Operator action — performed after this change is merged.)
-- [ ] 8.2 From a clone of a target previously adopted at `v0.1.1`,
+- [x] 8.2 From a clone of a target previously adopted at `v0.1.1`,
       run the curl one-liner for `upgrade` against `releases/latest`;
       assert the PR opens cleanly and the marker bumps to `v0.2.0`
       with `installed_at` preserved.
-      (Operator action — performed after 8.1.)
+      (Operator action — performed after 8.1. Verified via
+      `scripts/smoke-upgrade.sh --ref v0.2.0 --cleanup`:
+      PR opens cleanly, `source_ref=v0.2.0`, `installed_at`
+      preserved. End-to-end re-verified on v0.2.1 — see follow-up
+      note below.)
+
+## Follow-up — v0.2.1 patch
+
+The 8.2 verification run surfaced a latent pre-R2.2 bug in
+`clone_remcc_at`: `git clone --branch <ref>` rejects raw commit SHAs,
+so `install.sh --ref <commit-sha>` (a documented form) failed at the
+clone step on both `init` and `upgrade`. Smoke-init had not exercised
+this path; smoke-upgrade step 5 deliberately uses a resolved SHA and
+caught it. Patched in v0.2.1 (`clone_remcc_at` now uses
+`git init` + `git fetch --depth 1` + `git checkout FETCH_HEAD`).
+The harness itself was hardened in the same pass — overbroad
+smoke-test grep tightened to `### Smoke test`, `git checkout main`
+added between upgrade re-runs, `verify_clean_main` error message
+made subcommand-aware, and smoke setup now wipes `$WORKDIR` so a
+prior failed run doesn't break the next one. Final
+`scripts/smoke-upgrade.sh --ref v0.2.1 --cleanup` end-to-end:
+ALL CHECKS PASSED.
