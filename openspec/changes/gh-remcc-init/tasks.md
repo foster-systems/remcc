@@ -174,11 +174,15 @@ never closed.
       MUST exit `ALL CHECKS PASSED`. Verified 2026-05-14: both passed
       after the section-10 prereq fix and the smoke lockfile-seed
       fix landed.
-- [ ] 9.7 Tag a follow-up release (`v0.1.1`) so the curl one-liner
+- [x] 9.7 Tag a follow-up release (`v0.1.1`) so the curl one-liner
       pointed at `releases/latest` picks up the fix. Release notes SHALL
       flag `v0.1.0` as missing the `WORKFLOW_PAT` seam (operators on
       `v0.1.0` must `gh secret set WORKFLOW_PAT` manually) and the
-      `package.json#packageManager` prereq.
+      `package.json#packageManager` prereq. Released `v0.1.1` on
+      2026-05-14 targeting `main` at `e7b2f10` (release notes include
+      the v0.1.0 upgrade recipe);
+      `gh api repos/premeq/remcc/releases/latest --jq .tag_name` now
+      returns `v0.1.1`.
 
 ## 10. package.json#packageManager prereq (scope expansion 2026-05-14)
 
