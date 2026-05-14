@@ -23,7 +23,11 @@ Push a `change/<name>` branch carrying an OpenSpec proposal and an `@change-appl
 
 ## Quickstart
 
-**Prerequisites**: a `remcc` GitHub App installed on the target repo, an Anthropic API key with budget, and an OpenSpec-initialised repo with `.claude/` committed — see [docs/SETUP.md#prerequisites](docs/SETUP.md#prerequisites) for the full checklist.
+**Prerequisites** (see [docs/SETUP.md#prerequisites](docs/SETUP.md#prerequisites) for the full checklist):
+
+- A `remcc` GitHub App installed on the target repo
+- An Anthropic API key with budget
+- An OpenSpec-initialised repo with `.claude/` committed
 
 From a clean clone of the target repository on `main`:
 
