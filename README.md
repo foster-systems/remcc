@@ -25,6 +25,11 @@ Push a `change/<name>` branch carrying an [OpenSpec](https://github.com/Fission-
 
 Three phases: author locally, apply on a runner, review and merge locally.
 
+```mermaid
+flowchart LR
+  A["Local · author<br/>steps 1–4"] --> B["Runner · apply<br/>steps 5–6"] --> C["Local · review<br/>steps 7–8"]
+```
+
 ### `01` · Prerequisites
 
 - An [OpenSpec](https://github.com/Fission-AI/OpenSpec)-initialised, pnpm-managed repo with `.claude/` committed
