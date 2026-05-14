@@ -100,12 +100,21 @@
       and asserts the seed token is absent from the post-init file —
       proving the overwrite — alongside the existing "PR body flags
       pre-existing paths" assertion.
-- [ ] 7.3 Re-run `install.sh init` on the same target; verify "already up
+- [x] 7.3 Re-run `install.sh init` on the same target; verify "already up
       to date" path is hit (task 5.6). Automated by
       `scripts/smoke-postmerge.sh` Step 2 (after the PR merge in Step 1).
-- [ ] 7.4 After merging the init PR, run the smoke-test one-liner from
+      Verified 2026-05-14 against `premeq/remcc-smoke` (`--ref main`):
+      Step 2 hit `already up to date    no template diff vs.
+      premeq/remcc-smoke@main; nothing to commit`, and no new
+      `remcc-init` PR was opened.
+- [x] 7.4 After merging the init PR, run the smoke-test one-liner from
       the PR body; confirm an apply run completes end-to-end. Automated
       by `scripts/smoke-postmerge.sh` Steps 3–4 (~$0.50–$5 Anthropic spend).
+      Verified 2026-05-14: opsx-apply run concluded with `success`
+      after the section-9 (WORKFLOW_PAT) and section-10
+      (`packageManager` prereq) scope expansions plus a smoke-only
+      lockfile-seed fix (`pnpm install` instead of `touch
+      pnpm-lock.yaml`).
 
 ## 8. Release
 
@@ -133,35 +142,43 @@ running `install.sh init` lands a repo whose installed workflow can't
 run. The follow-up was explicitly noted in `efdee3b`'s message and
 never closed.
 
-- [ ] 9.1 Add `read_workflow_pat_into_env`, `configure_workflow_pat_secret`,
+- [x] 9.1 Add `read_workflow_pat_into_env`, `configure_workflow_pat_secret`,
       `remove_workflow_pat_secret` to `templates/gh-bootstrap.sh` mirroring
       the `ANTHROPIC_API_KEY` treatment (env-or-prompt, `gh secret set`,
       install + uninstall paths). Prompt SHALL name the required PAT
-      scopes (`Contents: write`, `Workflows: write`).
-- [ ] 9.2 Update `install.sh` help to document the `WORKFLOW_PAT` env
-      passthrough and the bootstrap's secret-handling scope.
-- [ ] 9.3 Update `docs/SETUP.md`: add row 8 to the prereq table, add
+      scopes (`Contents: write`, `Workflows: write`). Landed in
+      `1faa6e9` (2026-05-14).
+- [x] 9.2 Update `install.sh` help to document the `WORKFLOW_PAT` env
+      passthrough and the bootstrap's secret-handling scope. Landed in
+      `1faa6e9` (2026-05-14).
+- [x] 9.3 Update `docs/SETUP.md`: add row 8 to the prereq table, add
       step 8 to the bootstrap walk-through (renumber idempotency-smoke
       from 9 to 10), add a row to the "Provided by the workflow" table,
       and extend the "Removing remcc" section to mention deletion of
-      both secrets (without revoking the PAT itself).
-- [ ] 9.4 Add `WORKFLOW_PAT` requirement to the `repo-adoption` spec
+      both secrets (without revoking the PAT itself). Landed in
+      `1faa6e9` (2026-05-14).
+- [x] 9.4 Add `WORKFLOW_PAT` requirement to the `repo-adoption` spec
       overlay in this change (`specs/repo-adoption/spec.md`), mirroring
       the existing `ANTHROPIC_API_KEY` requirement (operator-prompted,
-      uploaded via `gh secret set`, removed on uninstall).
-- [ ] 9.5 Update both smoke scripts to require `WORKFLOW_PAT` in the
+      uploaded via `gh secret set`, removed on uninstall). Landed in
+      `1faa6e9` (2026-05-14).
+- [x] 9.5 Update both smoke scripts to require `WORKFLOW_PAT` in the
       environment and pass it through (smoke-init.sh exports it for
       install.sh's gh-bootstrap.sh invocation; smoke-postmerge.sh
       doesn't need to re-pass since step 1 doesn't re-bootstrap, but
       its preflight should still assert the env var to fail fast).
-- [ ] 9.6 Re-run `scripts/smoke-init.sh --ref main` and
+      Landed in `1faa6e9` (2026-05-14).
+- [x] 9.6 Re-run `scripts/smoke-init.sh --ref main` and
       `scripts/smoke-postmerge.sh --ref main --cleanup` end-to-end with
       both `ANTHROPIC_API_KEY` and `WORKFLOW_PAT` exported. Both scripts
-      MUST exit `ALL CHECKS PASSED`.
+      MUST exit `ALL CHECKS PASSED`. Verified 2026-05-14: both passed
+      after the section-10 prereq fix and the smoke lockfile-seed
+      fix landed.
 - [ ] 9.7 Tag a follow-up release (`v0.1.1`) so the curl one-liner
       pointed at `releases/latest` picks up the fix. Release notes SHALL
       flag `v0.1.0` as missing the `WORKFLOW_PAT` seam (operators on
-      `v0.1.0` must `gh secret set WORKFLOW_PAT` manually).
+      `v0.1.0` must `gh secret set WORKFLOW_PAT` manually) and the
+      `package.json#packageManager` prereq.
 
 ## 10. package.json#packageManager prereq (scope expansion 2026-05-14)
 
@@ -175,25 +192,32 @@ Real adopters following the v1 prereq ("pnpm-managed repo with
 `pnpm-lock.yaml`") who happen not to have `packageManager` in their
 `package.json` would hit the same failure on their first apply run.
 
-- [ ] 10.1 Add `verify_package_manager_field` to `install.sh` (parse
+- [x] 10.1 Add `verify_package_manager_field` to `install.sh` (parse
       `package.json` with jq, require `.packageManager` to start with
       `pnpm@`). Wire it into `verify_prereqs` after the existing
       `pnpm-lock.yaml` check. Error message SHALL name the field and
-      give an example value.
-- [ ] 10.2 Add row `5b` to the `docs/SETUP.md` prereq table covering
+      give an example value. Landed in `b91b520` (2026-05-14).
+- [x] 10.2 Add row `5b` to the `docs/SETUP.md` prereq table covering
       `package.json#packageManager`. Correct the now-wrong note in the
       "Provided by the workflow" table that claims `pnpm/action-setup`
-      falls back to the action's latest (it does not).
-- [ ] 10.3 Update the `repo-adoption` spec overlay in this change to
+      falls back to the action's latest (it does not). Landed in
+      `b91b520` (2026-05-14).
+- [x] 10.3 Update the `repo-adoption` spec overlay in this change to
       MODIFY the existing "Adoption prerequisites documented"
       requirement: add the `packageManager` clause, the operator-facing
       scenario for the new prereq row, and a "Missing packageManager
-      field is caught before mutation" scenario.
-- [ ] 10.4 Update `scripts/smoke-init.sh`'s seeded `package.json` to
+      field is caught before mutation" scenario. Landed in `b91b520`
+      (2026-05-14).
+- [x] 10.4 Update `scripts/smoke-init.sh`'s seeded `package.json` to
       include `packageManager: pnpm@<version>` so the smoke target
-      mirrors a real pnpm adopter.
-- [ ] 10.5 Re-run `scripts/smoke-init.sh --ref main` (verifying the new
+      mirrors a real pnpm adopter. Landed in `b91b520` (2026-05-14);
+      `1945371` (2026-05-14) follow-up replaced `touch pnpm-lock.yaml`
+      with `pnpm install` so the seed lockfile is valid for the
+      workflow's `pnpm install --frozen-lockfile` step.
+- [x] 10.5 Re-run `scripts/smoke-init.sh --ref main` (verifying the new
       prereq passes against the updated seed) and
       `scripts/smoke-postmerge.sh --ref main --cleanup` (verifying the
       apply workflow now completes `Setup pnpm` and runs to success).
-      Both scripts MUST exit `ALL CHECKS PASSED`.
+      Both scripts MUST exit `ALL CHECKS PASSED`. Verified 2026-05-14:
+      smoke-init `ALL CHECKS PASSED`; smoke-postmerge `ALL CHECKS PASSED`
+      with the apply run concluding `success`.
