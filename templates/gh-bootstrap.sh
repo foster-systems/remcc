@@ -385,8 +385,13 @@ read_apply_config_into_env() {
 }
 
 get_repo_variable_value() {
-  local repo="$1" name="$2"
-  gh api "repos/${repo}/actions/variables/${name}" --jq '.value' 2>/dev/null || true
+  local repo="$1" name="$2" body
+  # gh api with --jq still prints the raw error body to stdout on 404, which
+  # leaked the JSON error blob into callers. Fetch the body, then extract
+  # .value via jq only when it's a real success response.
+  body="$(gh api "repos/${repo}/actions/variables/${name}" 2>/dev/null)" || true
+  [ -n "${body}" ] || return 0
+  printf '%s' "${body}" | jq -r 'if type=="object" and has("value") then .value else empty end'
 }
 
 set_repo_variable() {
