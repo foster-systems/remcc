@@ -27,144 +27,130 @@ Eight manual touches, condensed from `docs/SETUP.md`:
    commit, watch Actions tab).
 
 `gh-bootstrap.sh` is already idempotent and tight — it is not the
-bottleneck. The friction concentrates in:
-
-- **Template-merge semantics** for `settings.json` and
-  `openspec/config.yaml`. Hand-merge YAML is error-prone.
-- **Two-clones-side-by-side pattern.** `REMCC=../remcc; cp …` is
-  awkward, version-ambiguous, and leaves no breadcrumb of *which*
-  remcc commit was adopted.
-- **Setup-branch vs change-branch context flip.** Documented but a
-  footgun.
+bottleneck. The friction concentrates in template-merge semantics
+(steps 3–4), the "two clones side-by-side" pattern (no version
+breadcrumb), and the setup-branch / change-branch context flip.
 
 ## Today's update delivery
 
-Nothing. Once templates are copied, the adopter is frozen at that
-remcc commit. Workflow bug fix lands here? Every adopter re-diffs
-and re-copies by hand. No version marker in the adopter repo
-identifies which remcc snapshot they're running.
+Nothing. Templates are frozen at the remcc commit the adopter copied.
+No version marker, no refresh path.
 
-## Design space — three composable building blocks
+## Decisions made 2026-05-13
 
-### Block A — Reusable workflow
+- **No reusable workflow.** Block A (cross-repo `uses:`) is rejected:
+  introduces a runtime dependency on remcc, supply-chain trust
+  escalation, customization loss, and org-allowlist friction. Wins
+  the auto-update story but the trust/availability costs outweigh
+  the benefit at this project's scale.
+- **Copy/paste stays the model.** Templates are physical files in
+  the adopter repo. Updates are PRs that overwrite the files; the
+  git diff is the conversation. Trust posture is "any other PR."
+- **Trust the adopter.** Assume operators review PRs carefully and
+  understand the scripts they run. No auto-merge of upgrade PRs,
+  no scheduled cron — the operator triggers `gh remcc upgrade` when
+  they want it. Stale templates are the operator's problem.
+- **First install also uses overwrite-and-PR** (option B from prior
+  thread). `gh remcc init` overwrites template-managed files if they
+  exist and opens a PR; operator handles any customization
+  collisions on their side.
 
-Move `opsx-apply.yml` into this repo as a callable workflow.
-Adopters install a ~10-line shim:
-
-```yaml
-jobs:
-  apply:
-    uses: premeq/remcc/.github/workflows/opsx-apply.yml@v1
-    secrets: inherit
-    # vars: …  (OPSX_APPLY_MODEL / OPSX_APPLY_EFFORT, etc.)
-```
-
-Update path for workflow internals: re-tag `v1` → all adopters pick
-up the new code on their next run. Zero copy/paste.
-
-**Cost.** Cross-repo `uses:` runs *our* code in adopter's env. Pin
-to commit SHA for security-sensitive cases; document the tradeoff.
-
-### Block B — `gh remcc init` (one-shot onboarding)
-
-A `gh` extension distributed from this repo:
-
-1. Prereq check (replaces the eyeball checklist).
-2. Stage files into target repo (writes the shim, merges
-   `settings.json` and `openspec/config.yaml` programmatically).
-3. Open + auto-merge `setup-remcc` PR.
-4. Run `gh-bootstrap.sh` inline.
-5. Run smoke test (optional — see open thread).
-6. Drop `.remcc/version` marker recording the source tag.
-
-Adopter UX:
+## Approach: two commands, one shape
 
 ```
-gh extension install premeq/remcc
-cd my-target-repo
-gh remcc init
+                       gh remcc init                gh remcc upgrade
+                       ─────────────                ────────────────
+prereqs                check                        skip
+bootstrap config       run gh-bootstrap.sh          skip
+templates              write all                    overwrite all
+.remcc/version         write                        bump
+PR                     open & link diff             open & link diff
+smoke test             skip (see open thread)       skip
 ```
 
-One command. Replaces SETUP.md steps 1–4.
+Same shape for both: write/overwrite files, open a PR, hand the
+diff to the operator. Init does the extra one-time work
+(prereq check, bootstrap). Upgrade is init minus the one-time bits.
 
-### Block C — `gh remcc upgrade` (refresh non-workflow assets)
+### `gh remcc init`
 
-Reads `.remcc/version`, fetches templates at the latest tag,
-three-way merges `settings.json` + `openspec/config.yaml` (showing
-diff, asking before applying), updates the shim's `@v1` ref if
-needed, bumps `.remcc/version`.
+One-time onboarding. Replaces SETUP.md steps 1–7.
 
-Pull-based, operator-triggered. Enough for v1; adopters can wire
-this into Renovate/Dependabot-style schedules later.
+1. Prereq check (replaces eyeball checklist).
+2. Run `gh-bootstrap.sh` (configures GitHub-side controls; idempotent
+   so safe to call from init).
+3. Create branch `remcc-init` (regular branch, not `change/**`).
+4. Write/overwrite template-managed files:
+   - `.github/workflows/opsx-apply.yml`
+   - `.claude/settings.json`
+   - `openspec/config.yaml`
+   - `.remcc/version` (marker, records source tag)
+5. Commit, push, open PR.
+6. Print "review the PR; if any of those files were yours, expect
+   collisions in the diff. Merge when satisfied."
 
-## Block dependencies
+### `gh remcc upgrade`
 
-```
-   ┌──────┐
-   │  A   │   reusable workflow
-   └───┬──┘
-       │ defines shim interface
-       ▼
-   ┌──────┐
-   │  B   │   gh remcc init
-   └───┬──┘
-       │ writes .remcc/version
-       ▼
-   ┌──────┐
-   │  C   │   gh remcc upgrade
-   └──────┘
-```
+Periodic refresh. Operator runs when they want updates.
 
-A and B can land independently; C depends on B's version marker.
-Working hypothesis: split R2 into R2.1 (A), R2.2 (B), R2.3 (C) and
-land in order.
+1. Read `.remcc/version`.
+2. Fetch new templates at the latest remcc tag (or specified ref).
+3. If no change, exit (no PR opened).
+4. Create branch `remcc-upgrade-<ref>`.
+5. Overwrite the same template-managed files.
+6. Bump `.remcc/version`.
+7. Commit, push, open PR. Body lists files touched and a link to
+   the remcc changelog between the previous and new ref.
+8. Operator reviews diff, possibly amends to re-apply customizations,
+   merges.
 
-## Open threads (awaiting decisions)
+## Scope split
 
-**(1) Scope of R2.** All three blocks under one roadmap item, or
-split as R2.1 / R2.2 / R2.3 with separate proposals?
+Working hypothesis: two changes.
 
-**(2) CLI distribution channel.**
+- **R2.1 — `gh remcc init`.** Onboarding automation. Replaces
+  SETUP.md steps 1–7. Depends on `.remcc/version` marker design.
+- **R2.2 — `gh remcc upgrade`.** Update delivery. Depends on
+  R2.1 (the marker, the file list).
 
-| Shape | Install | Update |
-|---|---|---|
-| `gh` extension | `gh extension install premeq/remcc` | `gh extension upgrade remcc` |
-| curl-pipe | `curl … \| sh` | re-run installer |
-| npm package | `npm i -g @premeq/remcc` | `npm update -g` |
+R2.1 can ship independently — adopters can use it without ever
+calling `upgrade`. R2.2 depends on R2.1 having written the marker.
 
-Leaning `gh` extension (adopters already need `gh` authenticated;
-bootstrap is `gh api` end-to-end). Open.
+## Remaining open threads
 
-**(3) Shim pin granularity.** `@v1` (major), `@v1.2.3` (exact), or
-`@<sha>` (audit-friendly)? Working default: `@v1`, document
-SHA-pinning for security-sensitive adopters.
+**(1) Distribution channel.** Lean `gh extension install premeq/remcc`
+(adopters already need `gh` authenticated; bootstrap is `gh api`
+end-to-end). Open alternatives: curl-pipe install, npm package.
 
-**(4) The settings.json / openspec/config.yaml merge problem.**
-Three options:
+**(2) Smoke test in `init`.** Auto-triggering a real apply burns
+Anthropic tokens (~$0.50–$5). Two options: (a) end init at "PR
+opened," let operator decide when to smoke-test; (b) prompt
+operator whether to also fire a smoke-test apply. Lean (a) — the
+PR review is itself the operator's checkpoint, and smoke testing
+can be a documented one-liner.
 
-- A. Refuse to auto-merge — bail and ask operator to merge by hand,
-  then re-run. Breaks the one-command promise.
-- B. Known-keys merge — we know the exact keys remcc baseline adds;
-  merge programmatically (e.g. `yq`), bail loudly on collision.
-- C. Move all remcc-managed config into a separate file
-  (`openspec/config.remcc.yaml`) loaded alongside the operator's
-  own — sidesteps merging entirely **iff OpenSpec supports config
-  layering**.
+**(3) What goes in `.remcc/version`.** Minimum: source tag/SHA.
+Maybe also: list of file paths managed by remcc (so upgrade knows
+what to overwrite even if the set changes between versions). Tied
+to upgrade's design.
 
-(C) is cleanest if feasible. Needs investigation of OpenSpec's
-config loader: single fixed path, or composable?
-
-**(5) Smoke test in `init`.** Triggering a real apply burns
-Anthropic tokens (~$0.50–$5). Acceptable cost-of-entry, or stop
-short and hand the operator a one-liner to fire it themselves?
+**(4) Templates not currently in `templates/`.** `gh-bootstrap.sh`
+itself ships from remcc. Init invokes it inline. Should upgrade
+also refresh `gh-bootstrap.sh` if it changes upstream? Probably
+yes — but the script isn't copied into the adopter repo today,
+it's invoked from a sibling clone. With `gh remcc` as an
+extension, the bootstrap logic lives in the extension itself,
+not in the adopter repo. Resolves cleanly.
 
 ## Notes for resume
 
 - Spec files to revisit: `openspec/specs/repo-adoption/spec.md`,
-  `openspec/specs/apply-workflow/spec.md`.
-- Bootstrap script to factor against: `templates/gh-bootstrap.sh`
-  (already idempotent — can be invoked from `gh remcc init`).
-- SETUP.md will need a near-rewrite once Block B exists; today's
-  step-by-step becomes the "manual fallback" appendix.
-- Naming: this repo is `premeq/remcc`. The extension would be
-  installed as `gh remcc`. The marker file would be `.remcc/version`.
+  `openspec/specs/apply-workflow/spec.md`. Adoption spec will need
+  significant rewrites once R2.1 ships.
+- `templates/gh-bootstrap.sh` is already idempotent and can be
+  invoked from the extension as-is.
+- SETUP.md will need a near-rewrite once R2.1 ships; today's
+  step-by-step becomes a "manual fallback" appendix for adopters
+  who can't or won't install the `gh` extension.
+- Naming: repo is `premeq/remcc`; extension installed as
+  `gh remcc`; marker file `.remcc/version`.
