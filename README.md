@@ -1,71 +1,71 @@
-# remcc: remote Claude Code
+<div align="center">
 
-Run [Claude Code](https://claude.com/claude-code) unattended on GitHub
-Actions instead of your laptop. Push an
-[OpenSpec](https://github.com/Fission-AI/OpenSpec) change branch,
-Claude implements it on the runner, and opens a pull request for
-review.
+<img src="assets/logo.png" width="180" alt="remcc logo">
 
-## What it solves
+# remcc
 
-Claude Code runs interactively in a terminal — every AI-driven change
-needs an open laptop and a human watching the loop. remcc moves that
-loop onto GitHub Actions so changes proceed while you do something
-else, and so the work lands as a normal PR with the usual review and
-branch-protection guardrails.
+Run Claude Code unattended — push a change branch, get a PR.
 
-The trigger is deliberately narrow: pushing to `change/<name>` runs
-`/opsx:apply` on a GitHub-hosted runner. The runner is permissive
-(`--dangerously-skip-permissions`); the boundary is tight (GitHub
-token confined to `change/**`, `main` protected, secrets redacted).
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Powered by Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-6f42c1.svg)](https://claude.com/claude-code)
+[![OpenSpec](https://img.shields.io/badge/spec-OpenSpec-2ea44f.svg)](https://github.com/Fission-AI/OpenSpec)
+[![Last commit](https://img.shields.io/github/last-commit/premeq/remcc.svg)](https://github.com/premeq/remcc/commits/main)
 
-## Limitations
+</div>
 
-remcc v1 is a docs-and-templates kit, not a service or runtime. It
-assumes:
+Push a `change/<name>` branch carrying an OpenSpec proposal and an `@change-apply` opt-in commit; remcc runs `/opsx:apply` with [Claude Code](https://claude.com/claude-code) on a GitHub-hosted runner and opens a pull request for normal review.
 
-- **Claude Code only.** No other AI coding agents.
-- **GitHub Actions only.** No GitLab, Bitbucket, CircleCI, etc.
-- **OpenSpec `/opsx:apply` only.** No arbitrary prompts.
-- **pnpm-managed JavaScript repos only.** The workflow runs
-  `pnpm install --frozen-lockfile`.
-- **One invocation per change.** Push or `workflow_dispatch`, then
-  watch the PR.
-- Some hardening (push rulesets, secret push protection) requires an
-  org-owned repo, a public repo, or GitHub Advanced Security; the
-  user-owned-private case loses those two controls — see
-  [docs/SECURITY.md](docs/SECURITY.md).
+## Why remcc
 
-## How to use
+- **No laptop tether.** The Claude Code loop runs on a GitHub-hosted runner, so changes proceed while you do something else.
+- **Normal PR review.** Output lands as a branch + PR; the usual review, CI, and branch-protection guardrails apply.
+- **Tight safety boundary.** The bot authenticates as a GitHub App scoped to `change/**`, `main` is branch-protected, and a `change/**` ruleset blocks force-push and deletion.
+
+## Quickstart
 
 From a clean clone of the target repository on `main`:
 
 ```sh
-cd <target-repo>
 bash <(curl -fsSL https://raw.githubusercontent.com/premeq/remcc/main/install.sh) init
 ```
 
-This one-liner verifies prerequisites (GitHub admin, OpenSpec
-initialised, `pnpm-lock.yaml` present, local tools), runs the
-GitHub-side configuration (branch protection, rulesets,
-`ANTHROPIC_API_KEY` secret, per-repo apply defaults), writes the
-template files into the working tree, and opens a `remcc-init` pull
-request for you to review and merge. Once merged, push a
-`change/<name>` branch carrying an OpenSpec proposal and the
-`opsx-apply` workflow takes over.
+This verifies prerequisites, configures GitHub-side controls (branch protection, rulesets, `ANTHROPIC_API_KEY`, apply defaults), writes the template files, and opens a `remcc-init` PR. See [docs/SETUP.md](docs/SETUP.md) for the full flow and a manual fallback.
 
-To refresh the template-managed files at a newer remcc ref later,
-run the companion `upgrade` subcommand from the same kind of clean
-clone:
+## What you get
+
+- **Change-branch trigger with `@change-apply` opt-in.** Pushing to `change/<name>` only fires the workflow when the head commit subject opts in — see [docs/SETUP.md#the-canonical-trigger-commit](docs/SETUP.md#the-canonical-trigger-commit).
+- **GitHub App identity scoped to `change/**`.** The bot authors PRs as `app/<slug>` via `REMCC_APP_ID` / `REMCC_APP_PRIVATE_KEY` / `REMCC_APP_SLUG`, with installation permissions limited to the change-branch surface.
+- **Branch-protected `main`.** Direct pushes to `main` are blocked; the bot's only path is a PR.
+- **Per-run model and effort overrides.** Defaults live in repo variables `OPSX_APPLY_MODEL` / `OPSX_APPLY_EFFORT`; trailers on the trigger commit or `workflow_dispatch` inputs override per run — see [docs/SETUP.md#configuring-the-apply-model](docs/SETUP.md#configuring-the-apply-model).
+- **Draft PR on failure.** If `/opsx:apply` errors, remcc still opens a draft PR with logs attached so you can debug from the diff.
+- **`install.sh upgrade`.** Refresh the template-managed files at a newer remcc ref via a `remcc-upgrade` PR — see [docs/SETUP.md#upgrading-remcc](docs/SETUP.md#upgrading-remcc).
+
+## Limitations
+
+remcc v1 is intentionally narrow:
+
+- **Claude Code only.** No other AI coding agents.
+- **GitHub Actions only.** No GitLab, Bitbucket, CircleCI.
+- **OpenSpec `/opsx:apply` only.** No arbitrary prompts.
+- **pnpm-managed JavaScript repos only.** The workflow runs `pnpm install --frozen-lockfile`.
+- **One invocation per change.** Push or `workflow_dispatch`, then watch the PR.
+
+Deeper hardening caveats (org-vs-user-owned repo, GHAS-gated controls) live in [docs/SECURITY.md](docs/SECURITY.md).
+
+## Upgrade
 
 ```sh
 bash <(curl -fsSL https://raw.githubusercontent.com/premeq/remcc/main/install.sh) upgrade
 ```
 
-`upgrade` opens a `remcc-upgrade` PR with the template diff; see
-[docs/SETUP.md](docs/SETUP.md#upgrading-remcc) for the full flow.
+Opens a `remcc-upgrade` PR with the template diff against the pinned ref — see [docs/SETUP.md#upgrading-remcc](docs/SETUP.md#upgrading-remcc).
 
-Prefer not to pipe a remote script to bash, or want to inspect first?
-The manual checklist in [docs/SETUP.md](docs/SETUP.md) is the verbatim
-fallback. Cost guidance: [docs/COSTS.md](docs/COSTS.md). Security
-model: [docs/SECURITY.md](docs/SECURITY.md).
+## Docs
+
+- [docs/SETUP.md](docs/SETUP.md) — prerequisites, App setup, automated and manual adoption, configuration knobs, smoke tests.
+- [docs/SECURITY.md](docs/SECURITY.md) — threat model, identity boundary, hardening caveats by repo ownership.
+- [docs/COSTS.md](docs/COSTS.md) — Anthropic API and GitHub Actions cost guidance.
+
+## Status & license
+
+remcc v1 targets single-repo adoption and is stable enough for trial use; the historical change record lives under [`openspec/changes/archive/`](openspec/changes/archive/). MIT — see [LICENSE](LICENSE).
