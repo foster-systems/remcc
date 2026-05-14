@@ -6,5 +6,6 @@ I want to run Claude Code authoring code in unattended mode where where and I do
 
 - [x] R1: Be able to complete the whole spec-driven flow end to end on the change branch. See: openspec/explore/R1-apply-flag.md (shipped via `opt-in-apply-trigger`, archived 2026-05-13)
 - [x] R2: Automate onboarding and delivery of updates for adopter repos, making it as easy as possible (e.g. run one script, minimze manual actions). See: openspec/explore/R2-onboarding.md (R2.1 `install.sh init` shipped via `gh-remcc-init`, archived 2026-05-14; R2.2 `install.sh upgrade` shipped via `install-sh-upgrade`, archived 2026-05-14)
-- [ ] R3: cloud run `opsx:verify` after apply and... automatically fix? or: highlight in PR -> human review -> another go.
-- [ ] R4: Codify the working loop: describe the bigger problem → propose → iterate → split into smaller bite-size changes → apply changes one-by-one via remcc.
+- [ ] R3: The merge request that is opened by the bot after verify, to be authored by the bot and not me, so that I can do a proper code review and merge without overriding branch protection rules.
+- [ ] R4: cloud run `opsx:verify` after apply and... automatically fix? or: highlight in PR -> human review -> another go.
+- [ ] R5: Codify the working loop: describe the bigger problem → propose → iterate → split into smaller bite-size changes → apply changes one-by-one via remcc.
