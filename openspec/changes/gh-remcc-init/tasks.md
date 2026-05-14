@@ -108,6 +108,10 @@
       than `main`. Released `v0.1.0` on 2026-05-14 targeting `main` at
       b70fe40; `gh api repos/premeq/remcc/releases/latest --jq .tag_name`
       now returns `v0.1.0`.
-- [ ] 8.2 Verify the curl one-liner against the tagged release for a
+- [x] 8.2 Verify the curl one-liner against the tagged release for a
       third-party operator (uses `releases/latest`, fetches the script
-      from the tag, clones the tag).
+      from the tag, clones the tag). Verified 2026-05-14 via
+      `scripts/smoke-init.sh --ref auto`: ref resolved to `v0.1.0`,
+      install.sh fetched from `/v0.1.0/install.sh`, install.sh omitted
+      `--ref` and self-resolved via `releases/latest`, `source_ref`
+      written as `v0.1.0`, all seven spec scenarios passed.

@@ -6,10 +6,15 @@
 #
 # Usage:
 #   ANTHROPIC_API_KEY=sk-... scripts/smoke-init.sh \
-#     [--target OWNER/NAME] [--ref REF] [--workdir DIR] \
+#     [--target OWNER/NAME] [--ref REF|auto] [--workdir DIR] \
 #     [--skip-setup] [--cleanup]
 #
 # Defaults: --target premeq/remcc-smoke, --ref main, --workdir /tmp/remcc-smoke
+#
+# --ref auto: resolve the latest release tag on premeq/remcc, fetch install.sh
+# from that tag's URL, and omit --ref to install.sh so it resolves the source
+# ref via its own `releases/latest` path. This is the third-party-operator
+# shape (covers task 8.2 of gh-remcc-init).
 
 set -euo pipefail
 
@@ -37,7 +42,18 @@ for t in gh jq pnpm git curl; do
   command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 1; }
 done
 
-INSTALL_URL="https://raw.githubusercontent.com/premeq/remcc/${REF}/install.sh"
+if [ "$REF" = "auto" ]; then
+  RESOLVED_REF="$(gh api repos/premeq/remcc/releases/latest --jq .tag_name 2>/dev/null || true)"
+  [ -n "$RESOLVED_REF" ] || { echo "no release tag found on premeq/remcc" >&2; exit 1; }
+  INSTALL_URL="https://raw.githubusercontent.com/premeq/remcc/${RESOLVED_REF}/install.sh"
+  INIT_REF_ARGS=()
+  EXPECTED_SRC_REF="$RESOLVED_REF"
+  echo "ref=auto resolved to ${RESOLVED_REF}"
+else
+  INSTALL_URL="https://raw.githubusercontent.com/premeq/remcc/${REF}/install.sh"
+  INIT_REF_ARGS=(--ref "$REF")
+  EXPECTED_SRC_REF="$REF"
+fi
 FAILED=0
 
 step() { printf '\n=== %s ===\n' "$*"; }
@@ -97,7 +113,7 @@ fi
 # ----------------------------------------------------------------------------
 step "Step 2: first init"
 git checkout main
-bash <(curl -fsSL "$INSTALL_URL") init --ref "$REF"
+bash <(curl -fsSL "$INSTALL_URL") init ${INIT_REF_ARGS[@]+"${INIT_REF_ARGS[@]}"}
 pass "first init exited 0"
 
 # Snapshot after run #1 (this is the reference state for idempotency)
@@ -117,7 +133,7 @@ done
 SRC_REF="$(jq -r .source_ref < .remcc/version)"
 SRC_SHA="$(jq -r .source_sha < .remcc/version)"
 INST_AT="$(jq -r .installed_at < .remcc/version)"
-[ "$SRC_REF" = "$REF" ] && pass "source_ref=$SRC_REF" || fail "source_ref=$SRC_REF (expected $REF)"
+[ "$SRC_REF" = "$EXPECTED_SRC_REF" ] && pass "source_ref=$SRC_REF" || fail "source_ref=$SRC_REF (expected $EXPECTED_SRC_REF)"
 [[ "$SRC_SHA" =~ ^[0-9a-f]{40}$ ]] && pass "source_sha is 40-char SHA" || fail "source_sha=$SRC_SHA"
 [[ "$INST_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] && pass "installed_at ISO 8601: $INST_AT" || fail "installed_at=$INST_AT"
 
@@ -152,7 +168,7 @@ RUNS="$(gh run list --repo "$TARGET" --workflow opsx-apply.yml --json databaseId
 # ----------------------------------------------------------------------------
 step "Step 6: second init (idempotency)"
 git checkout main
-bash <(curl -fsSL "$INSTALL_URL") init --ref "$REF"
+bash <(curl -fsSL "$INSTALL_URL") init ${INIT_REF_ARGS[@]+"${INIT_REF_ARGS[@]}"}
 pass "second init exited 0"
 
 PR_COUNT="$(gh pr list --repo "$TARGET" --head remcc-init --state open --json number --jq 'length')"
