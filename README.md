@@ -64,7 +64,7 @@ Only commit subjects starting with `@change-apply` trigger apply. Trailers (`Ops
 
 ---
 
-**Runner takes over.**
+:robot: **Runner takes over.** 
 
 ### `05` · `/opsx:apply` runs on a GitHub-hosted Ubuntu VM
 
@@ -76,7 +76,7 @@ The App pushes the apply output and opens a PR to `main` as `<app-slug>[bot]` �
 
 ---
 
-**Back to local.**
+:desktop_computer: **Back to local.**
 
 ### `07` · Verify and archive locally
 
