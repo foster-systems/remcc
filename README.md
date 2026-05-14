@@ -21,9 +21,11 @@ Push a `change/<name>` branch carrying an [OpenSpec](https://github.com/Fission-
 - **Normal PR review.** Output lands as a branch + PR; the usual review, CI, and branch-protection apply.
 - **Tight safety boundary.** Claude Code runs in an ephemeral Ubuntu VM, destroyed after coding is completed.
 
-## Walkthrough
+## Full walkthrough in 3 minutes
 
-### 1. Prerequisites
+Three phases: author locally, apply on a runner, review and merge locally.
+
+### `01` · Prerequisites
 
 - An [OpenSpec](https://github.com/Fission-AI/OpenSpec)-initialised, pnpm-managed repo with `.claude/` committed
 - A `remcc` GitHub App installed on the target repo
@@ -31,7 +33,7 @@ Push a `change/<name>` branch carrying an [OpenSpec](https://github.com/Fission-
 
 Full checklist: [docs/SETUP.md#prerequisites](docs/SETUP.md#prerequisites).
 
-### 2. Installation
+### `02` · Installation
 
 From a clean clone of the target repository on `main`:
 
@@ -41,7 +43,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/premeq/remcc/main/install.sh
 
 Verifies prerequisites, configures GitHub-side controls (branch protection, rulesets, secrets, apply defaults), writes the workflow and template files, and opens a `remcc-init` PR for you to merge. See [docs/SETUP.md](docs/SETUP.md).
 
-### 3. Propose a change locally
+### `03` · Propose a change locally
 
 On a fresh `change/<name>` branch, draft the OpenSpec change with Claude:
 
@@ -51,7 +53,7 @@ claude /opsx:propose
 
 Generates `openspec/changes/<name>/` with `proposal.md`, `design.md`, `specs/`, and `tasks.md`. Iterate freely — WIP pushes don't fire the runner.
 
-### 4. Push the `@change-apply` trigger commit
+### `04` · Push the `@change-apply` trigger commit
 
 ```sh
 git commit --allow-empty -m "@change-apply: first pass"
@@ -60,15 +62,23 @@ git push
 
 Only commit subjects starting with `@change-apply` trigger apply. Trailers (`Opsx-Model:`, `Opsx-Effort:`) override model and thinking budget per run — see [docs/SETUP.md#configuring-the-apply-model](docs/SETUP.md#configuring-the-apply-model).
 
-### 5. `/opsx:apply` runs on a GitHub-hosted Ubuntu VM
+---
+
+**Runner takes over.**
+
+### `05` · `/opsx:apply` runs on a GitHub-hosted Ubuntu VM
 
 The `opsx-apply` workflow spins up an ephemeral `ubuntu-latest` runner, executes `/opsx:apply <name>` against the branch state, validates the change, then destroys the VM. Logs upload as a workflow artifact.
 
-### 6. PR opened by the remcc GitHub App
+### `06` · PR opened by the remcc GitHub App
 
 The App pushes the apply output and opens a PR to `main` as `<app-slug>[bot]` — a distinct actor from you, so branch protection lets you review and approve. Apply errors land as a draft PR with logs attached.
 
-### 7. Verify and archive locally
+---
+
+**Back to local.**
+
+### `07` · Verify and archive locally
 
 Pull the PR branch, finalise the change, push back:
 
@@ -82,7 +92,7 @@ git push
 
 `/opsx:verify` checks the implementation against the artifacts. `/opsx:archive` moves the change folder under `openspec/changes/archive/` and syncs delta specs into the main specs. Any subject that doesn't start with `@change-apply` is safe — the archive push won't re-trigger the runner.
 
-### 8. Approve and merge
+### `08` · Approve and merge
 
 Approve the PR and merge into `main`. The change branch is deleted on merge.
 
