@@ -189,6 +189,26 @@ verify_prereqs() {
 
   [ -f pnpm-lock.yaml ] || err "pnpm-lock.yaml not found at repo root (remcc v1 supports pnpm-managed repos only)"
   sub "pnpm-lock.yaml present"
+
+  verify_package_manager_field
+  sub "package.json packageManager: pnpm@<version> present"
+}
+
+# The opsx-apply workflow uses pnpm/action-setup@v4 with no `version:` input,
+# which means it resolves the pnpm version from package.json#packageManager.
+# Without that field the workflow fails at "Setup pnpm".
+verify_package_manager_field() {
+  [ -f package.json ] \
+    || err "package.json not found at repo root (remcc v1 supports pnpm-managed repos only)"
+  local pm
+  pm="$(jq -r '.packageManager // empty' < package.json 2>/dev/null)" \
+    || err "could not parse package.json as JSON"
+  [ -n "${pm}" ] \
+    || err "package.json is missing the 'packageManager' field (set it to e.g. 'pnpm@9.12.3' — required by the workflow's pnpm/action-setup step)"
+  case "${pm}" in
+    pnpm@*) ;;
+    *) err "package.json#packageManager is '${pm}'; remcc v1 requires 'pnpm@<version>'" ;;
+  esac
 }
 
 # ----------------------------------------------------------------------------

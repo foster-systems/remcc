@@ -70,3 +70,49 @@ not revoke the PAT itself; the operator does that on GitHub).
   where `WORKFLOW_PAT` has been installed
 - **THEN** the repository secret `WORKFLOW_PAT` is deleted and the
   script exits zero
+
+## MODIFIED Requirements
+
+### Requirement: Adoption prerequisites documented
+
+The repo SHALL document the prerequisites a target repository MUST
+satisfy before adopting remcc. Prerequisites SHALL include: an
+initialised OpenSpec project, a `.claude/` directory committed to
+the repo, an existing `main` branch, a GitHub remote to which the
+operator has admin access, and (for v1) a pnpm-managed JavaScript
+project with a committed `pnpm-lock.yaml` at the repo root AND a
+`package.json` whose `packageManager` field is set to
+`pnpm@<version>`. The `packageManager` field is required because the
+workflow's `pnpm/action-setup@v4` step has no explicit `version:`
+input and resolves the pnpm version from that field; without it the
+action errors at runtime.
+
+The pnpm prerequisite reflects a v1 scoping decision: the workflow
+template installs workspace dependencies via `pnpm install
+--frozen-lockfile`. Adopters using npm, yarn, or no package manager
+at all are out of scope until a future change generalises the
+template.
+
+#### Scenario: Operator can verify prerequisites before starting
+
+- **WHEN** the operator opens `docs/SETUP.md`
+- **THEN** they find a checklist of prerequisites at the top of the
+  document with a verification command for each item, including a
+  check that `pnpm-lock.yaml` exists at the repo root and that
+  `package.json` declares `packageManager: pnpm@<version>`
+
+#### Scenario: Non-pnpm adopter is told remcc is not for them yet
+
+- **WHEN** an operator without a `pnpm-lock.yaml` reads `docs/SETUP.md`
+- **THEN** the prerequisites section explicitly states that v1 of
+  remcc supports pnpm-managed repos only, and points the operator
+  at an issue or future change for non-pnpm adoption
+
+#### Scenario: Missing packageManager field is caught before mutation
+
+- **WHEN** the operator runs `install.sh init` in a repo whose
+  `package.json` lacks a `packageManager` field (or whose value does
+  not start with `pnpm@`)
+- **THEN** the command exits non-zero with a message identifying the
+  missing/invalid field, and no GitHub-side configuration or file
+  write has been issued

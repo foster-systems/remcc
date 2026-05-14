@@ -162,3 +162,38 @@ never closed.
       pointed at `releases/latest` picks up the fix. Release notes SHALL
       flag `v0.1.0` as missing the `WORKFLOW_PAT` seam (operators on
       `v0.1.0` must `gh secret set WORKFLOW_PAT` manually).
+
+## 10. package.json#packageManager prereq (scope expansion 2026-05-14)
+
+Surfaced by the same 7.4 verification run that exposed the
+`WORKFLOW_PAT` gap: with `WORKFLOW_PAT` in place, the apply workflow
+proceeded to `Setup pnpm` and failed there because the smoke target's
+seeded `package.json` lacked the `packageManager` field, and
+`pnpm/action-setup@v4` in the workflow template has no `version:`
+input — so the action errors with "No pnpm version is specified."
+Real adopters following the v1 prereq ("pnpm-managed repo with
+`pnpm-lock.yaml`") who happen not to have `packageManager` in their
+`package.json` would hit the same failure on their first apply run.
+
+- [ ] 10.1 Add `verify_package_manager_field` to `install.sh` (parse
+      `package.json` with jq, require `.packageManager` to start with
+      `pnpm@`). Wire it into `verify_prereqs` after the existing
+      `pnpm-lock.yaml` check. Error message SHALL name the field and
+      give an example value.
+- [ ] 10.2 Add row `5b` to the `docs/SETUP.md` prereq table covering
+      `package.json#packageManager`. Correct the now-wrong note in the
+      "Provided by the workflow" table that claims `pnpm/action-setup`
+      falls back to the action's latest (it does not).
+- [ ] 10.3 Update the `repo-adoption` spec overlay in this change to
+      MODIFY the existing "Adoption prerequisites documented"
+      requirement: add the `packageManager` clause, the operator-facing
+      scenario for the new prereq row, and a "Missing packageManager
+      field is caught before mutation" scenario.
+- [ ] 10.4 Update `scripts/smoke-init.sh`'s seeded `package.json` to
+      include `packageManager: pnpm@<version>` so the smoke target
+      mirrors a real pnpm adopter.
+- [ ] 10.5 Re-run `scripts/smoke-init.sh --ref main` (verifying the new
+      prereq passes against the updated seed) and
+      `scripts/smoke-postmerge.sh --ref main --cleanup` (verifying the
+      apply workflow now completes `Setup pnpm` and runs to success).
+      Both scripts MUST exit `ALL CHECKS PASSED`.

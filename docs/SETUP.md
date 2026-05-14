@@ -21,6 +21,7 @@ proceeding.
 | 3 | OpenSpec initialised in the repo | `test -d openspec && echo ok` |
 | 4 | `.claude/` directory committed (skills/commands available to the runner) | `test -d .claude && echo ok` |
 | 5 | **pnpm-managed JavaScript project with a committed `pnpm-lock.yaml` at the repo root** | `test -f pnpm-lock.yaml && echo ok` |
+| 5b | `package.json` at the repo root with a `packageManager: pnpm@<version>` field (consumed by `pnpm/action-setup@v4`) | `jq -r .packageManager package.json` should print `pnpm@<version>` |
 | 6 | Local tools installed: `gh`, `jq`, `git`, Node.js ≥ 20.19, `pnpm` | `gh --version && jq --version && node -v && pnpm -v` |
 | 7 | An Anthropic API key with budget configured | (key is uploaded as a repo secret in step 3 below) |
 | 8 | A fine-grained GitHub PAT with `Contents: write` + `Workflows: write` on the target repo | Create at <https://github.com/settings/personal-access-tokens/new> (PAT is uploaded as the `WORKFLOW_PAT` repo secret in step 3 below) |
@@ -494,7 +495,7 @@ task itself.
 | Tool | Source | Notes |
 |---|---|---|
 | Node.js 20 | `actions/setup-node@v4` | Pinned by the workflow; do not assume the ubuntu-latest default Node version |
-| pnpm | `pnpm/action-setup@v4` | Resolves the version from your repo's `package.json#packageManager` if set, otherwise the action's latest |
+| pnpm | `pnpm/action-setup@v4` | Resolves the version from your repo's `package.json#packageManager` (e.g. `pnpm@9.12.3`); the action errors if neither this field nor a `version:` input is set, which is why prereq 5b exists |
 | Claude Code CLI | `npm install -g @anthropic-ai/claude-code` | Invoked with `--dangerously-skip-permissions` |
 | OpenSpec CLI | `npm install -g @fission-ai/openspec@latest` | Used for the post-apply validate step |
 | `ANTHROPIC_API_KEY` | Repo secret, exposed as env | Set by `gh-bootstrap.sh`; redacted from logs by GitHub |

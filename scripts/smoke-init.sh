@@ -85,7 +85,11 @@ if [ "$SKIP_SETUP" = 0 ]; then
   gh repo clone "$TARGET" "$WORKDIR"
   cd "$WORKDIR"
   cat > package.json <<'JSON'
-{ "name": "remcc-smoke", "private": true }
+{
+  "name": "remcc-smoke",
+  "private": true,
+  "packageManager": "pnpm@9.12.3"
+}
 JSON
   touch pnpm-lock.yaml
   mkdir -p openspec .claude

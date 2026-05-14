@@ -57,6 +57,10 @@ this change delivers the install half.
   `opsx-apply.yml` has needed this secret since `efdee3b` and the
   bootstrap was the only adoption-time seam still missing it.
 - `docs/SETUP.md` restructured: automated path first, manual path
-  appendix. Prereq table gains a `WORKFLOW_PAT` row.
+  appendix. Prereq table gains a `WORKFLOW_PAT` row and a
+  `package.json#packageManager` row (the latter required because
+  `pnpm/action-setup@v4` has no `version:` input in the workflow
+  template and errors when the field is absent — surfaced by the
+  task 7.4 smoke run on a target seeded without it).
 - `README.md`: top-level pointer to the curl one-liner.
 - No changes to `apply-workflow` spec or workflow internals.
