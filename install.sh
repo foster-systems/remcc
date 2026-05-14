@@ -269,6 +269,20 @@ write_version_marker() {
   local target="$1" ref="$2" sha now
   sha="$(resolved_source_sha)"
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  # Preserve installed_at when re-installing the same source ref+sha, so that
+  # back-to-back runs produce bit-identical version markers (and therefore
+  # identical commit trees on the remcc-init branch).
+  if [ -f "${target}" ]; then
+    local prev_ref prev_sha prev_at
+    prev_ref="$(jq -r '.source_ref // empty' < "${target}" 2>/dev/null || true)"
+    prev_sha="$(jq -r '.source_sha // empty' < "${target}" 2>/dev/null || true)"
+    if [ "${prev_ref}" = "${ref}" ] && [ "${prev_sha}" = "${sha}" ]; then
+      prev_at="$(jq -r '.installed_at // empty' < "${target}" 2>/dev/null || true)"
+      [ -n "${prev_at}" ] && now="${prev_at}"
+    fi
+  fi
+
   mkdir -p "$(dirname -- "${target}")"
   cat >"${target}" <<JSON
 {
@@ -329,8 +343,10 @@ run_bootstrap() {
 # ----------------------------------------------------------------------------
 
 create_init_branch() {
+  # Re-runs leave the branch behind. Drop it so we always rebuild from main
+  # with the current templates.
   if git rev-parse --verify --quiet "${INIT_BRANCH}" >/dev/null; then
-    err "local branch '${INIT_BRANCH}' already exists; delete it or rename and retry"
+    git branch -D "${INIT_BRANCH}" >/dev/null
   fi
   git checkout -b "${INIT_BRANCH}" main >/dev/null
 }
@@ -410,10 +426,27 @@ build_pr_body() {
 }
 
 push_and_open_pr() {
-  local repo="$1" preexisting="$2" ref="$3" body
-  log "Pushing branch ${INIT_BRANCH} to origin"
-  git push -u origin "${INIT_BRANCH}" >/dev/null 2>&1 \
-    || err "failed to push ${INIT_BRANCH} to origin"
+  local repo="$1" preexisting="$2" ref="$3" body existing_pr
+
+  # If the remote branch exists and its tree matches ours, skip the push
+  # (the previous run's tip is already correct).
+  git fetch origin "${INIT_BRANCH}" >/dev/null 2>&1 || true
+  if git rev-parse --verify --quiet "refs/remotes/origin/${INIT_BRANCH}" >/dev/null \
+     && [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse "origin/${INIT_BRANCH}^{tree}")" ]; then
+    log "Branch ${INIT_BRANCH} already in sync with origin; skipping push"
+  else
+    log "Pushing branch ${INIT_BRANCH} to origin"
+    git push --force-with-lease -u origin "${INIT_BRANCH}" >/dev/null 2>&1 \
+      || err "failed to push ${INIT_BRANCH} to origin"
+  fi
+
+  # If a PR is already open for this branch, leave it alone.
+  existing_pr="$(gh pr list --repo "${repo}" --head "${INIT_BRANCH}" --state open \
+                   --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+  if [ -n "${existing_pr}" ]; then
+    log "Pull request #${existing_pr} already open for ${INIT_BRANCH}; not opening another"
+    return 0
+  fi
 
   body="$(build_pr_body "${repo}" "${preexisting}" "${ref}")"
   log "Opening pull request"

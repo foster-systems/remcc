@@ -348,8 +348,13 @@ remove_anthropic_secret() {
 # ----------------------------------------------------------------------------
 
 read_apply_config_into_env() {
+  local repo="$1" existing
+
   if [ -z "${OPSX_APPLY_MODEL+x}" ]; then
-    if [ -t 0 ]; then
+    existing="$(get_repo_variable_value "${repo}" OPSX_APPLY_MODEL)"
+    if [ -n "${existing}" ]; then
+      OPSX_APPLY_MODEL="${existing}"
+    elif [ -t 0 ]; then
       printf 'OPSX_APPLY_MODEL (Claude model for /opsx:apply, e.g. opus, sonnet, haiku; empty to skip): ' >&2
       IFS= read -r OPSX_APPLY_MODEL || OPSX_APPLY_MODEL=""
     else
@@ -359,7 +364,10 @@ read_apply_config_into_env() {
   fi
 
   if [ -z "${OPSX_APPLY_EFFORT+x}" ]; then
-    if [ -t 0 ]; then
+    existing="$(get_repo_variable_value "${repo}" OPSX_APPLY_EFFORT)"
+    if [ -n "${existing}" ]; then
+      OPSX_APPLY_EFFORT="${existing}"
+    elif [ -t 0 ]; then
       printf 'OPSX_APPLY_EFFORT (low|medium|high; empty to skip): ' >&2
       IFS= read -r OPSX_APPLY_EFFORT || OPSX_APPLY_EFFORT=""
     else
@@ -395,7 +403,7 @@ set_repo_variable() {
 configure_apply_config_variables() {
   local repo="$1"
   log "Apply configuration variables (${repo})"
-  read_apply_config_into_env
+  read_apply_config_into_env "${repo}"
   if [ -n "${OPSX_APPLY_MODEL:-}" ]; then
     set_repo_variable "${repo}" OPSX_APPLY_MODEL "${OPSX_APPLY_MODEL}"
   else
