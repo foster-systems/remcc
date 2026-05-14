@@ -1,11 +1,13 @@
 # Setting up remcc on a target repository
 
 remcc adds an unattended `/opsx:apply` GitHub Actions workflow to a
-repository that already uses OpenSpec. Adoption is a small number of
-file copies plus a one-time GitHub configuration script. This document
-is the complete checklist; if you find yourself reaching for context
-that isn't here, that is a documentation bug — please record what you
-needed and update this file before continuing.
+repository that already uses OpenSpec. The fastest adoption is the
+one-liner under "Automated adoption" below; the manual checklist that
+follows it is preserved as a fallback for operators who prefer not to
+pipe a remote script to bash. This document is the complete reference;
+if you find yourself reaching for context that isn't here, that is a
+documentation bug — please record what you needed and update this file
+before continuing.
 
 ## Prerequisites
 
@@ -28,6 +30,96 @@ proceeding.
 > package managers is deferred to a future change; until then, please
 > open an issue on the remcc repository describing your setup rather
 > than working around the constraint locally.
+
+## Automated adoption (recommended)
+
+From a clean clone of the target repository on `main`:
+
+```sh
+cd <target-repo-clone>
+bash <(curl -fsSL https://raw.githubusercontent.com/premeq/remcc/main/install.sh) init
+```
+
+The one-liner:
+
+1. Re-verifies the prerequisites listed above and exits non-zero with a
+   clear message on the first unmet check (no GitHub config is touched
+   and no files are written before all checks pass).
+2. Resolves a remcc ref — by default the latest release tag on
+   `premeq/remcc`, overridable with `--ref <tag-or-sha>` — and
+   shallow-clones the repo at that ref into a tempdir (auto-cleaned
+   on exit).
+3. Runs the cloned `templates/gh-bootstrap.sh` against the target
+   (same idempotent GitHub-side configuration as Step 3 of the manual
+   fallback below). Re-running `install.sh init` produces no diff.
+4. Writes four template-managed files into the working tree,
+   overwriting any pre-existing copies:
+   - `.github/workflows/opsx-apply.yml`
+   - `.claude/settings.json`
+   - `openspec/config.yaml`
+   - `.remcc/version` *(new — see schema below)*
+5. Creates branch `remcc-init` from `main`, commits the four paths,
+   pushes to `origin`, and opens a pull request titled
+   `Adopt remcc via install.sh init`. The PR body lists every file
+   written, explicitly flags any path that existed before the run
+   ("you may have customizations here — verify the diff"), and includes
+   a copy-pasteable smoke-test one-liner to run after merging.
+
+If the resolved templates exactly match the current tree (a re-install
+with no upstream changes), `install.sh init` prints `already up to
+date` and exits zero without creating a branch or PR.
+
+`install.sh init` does **not** trigger an `opsx-apply` run. The
+operator's smoke test (from the PR body, after merging) is the
+end-to-end verification.
+
+### Inspect before running
+
+The `bash <(curl …)` form executes the downloaded script directly. If
+you prefer to read it first:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/premeq/remcc/main/install.sh -o install.sh
+less install.sh
+bash install.sh init
+```
+
+Both shapes work. The `curl … | bash -s -- init` shape also works —
+interactive prompts inside the script read from `/dev/tty` so the
+piped form does not hang.
+
+### The `.remcc/version` marker
+
+`install.sh init` writes `.remcc/version` recording the resolved
+source ref. The file is JSON:
+
+```json
+{
+  "source_ref": "v0.2.0",
+  "source_sha": "abc123…",
+  "installed_at": "2026-05-13T10:30:00Z"
+}
+```
+
+- `source_ref` — the remcc tag or sha the templates were fetched
+  from (default: the latest release tag, or `main` if no releases
+  exist).
+- `source_sha` — the commit `git clone --depth 1` landed on, used by
+  the forthcoming `upgrade` subcommand to compute the diff between
+  installed and desired refs.
+- `installed_at` — ISO 8601 UTC timestamp, informational.
+
+The marker is committed by `install.sh init` as part of the adoption
+PR. Don't hand-edit it; treat it as the installer's bookmark.
+
+## Manual fallback
+
+The remaining sections (Step 1 — Step 4) are the manual checklist that
+`install.sh init` replaces. Use them if you cannot or will not pipe a
+remote script to bash. The end-state is identical to the automated
+path, with one exception: the manual path does not write a
+`.remcc/version` marker, so a future `upgrade` won't know which
+remcc ref you adopted.
 
 ## Step 1 — copy the template files
 

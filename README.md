@@ -38,18 +38,23 @@ assumes:
 
 ## How to use
 
-1. Check prerequisites: GitHub admin on the target repo, an Anthropic
-   API key, OpenSpec initialised, a pnpm lockfile.
-2. Copy `templates/workflows/opsx-apply.yml` (and optionally
-   `templates/claude/settings.json`, `templates/openspec/config.yaml`)
-   into the target repo and merge to `main`.
-3. Run `templates/gh-bootstrap.sh` once to install branch protection,
-   rulesets, the API key secret, and per-repo `OPSX_APPLY_MODEL` /
-   `OPSX_APPLY_EFFORT` defaults.
-4. Push a `change/<name>` branch carrying an OpenSpec proposal. The
-   `opsx-apply` workflow runs Claude Code, implements the change, and
-   opens a PR.
+From a clean clone of the target repository on `main`:
 
-Full walkthrough: [docs/SETUP.md](docs/SETUP.md). Cost guidance:
-[docs/COSTS.md](docs/COSTS.md). Security model:
-[docs/SECURITY.md](docs/SECURITY.md).
+```sh
+cd <target-repo>
+bash <(curl -fsSL https://raw.githubusercontent.com/premeq/remcc/main/install.sh) init
+```
+
+This one-liner verifies prerequisites (GitHub admin, OpenSpec
+initialised, `pnpm-lock.yaml` present, local tools), runs the
+GitHub-side configuration (branch protection, rulesets,
+`ANTHROPIC_API_KEY` secret, per-repo apply defaults), writes the
+template files into the working tree, and opens a `remcc-init` pull
+request for you to review and merge. Once merged, push a
+`change/<name>` branch carrying an OpenSpec proposal and the
+`opsx-apply` workflow takes over.
+
+Prefer not to pipe a remote script to bash, or want to inspect first?
+The manual checklist in [docs/SETUP.md](docs/SETUP.md) is the verbatim
+fallback. Cost guidance: [docs/COSTS.md](docs/COSTS.md). Security
+model: [docs/SECURITY.md](docs/SECURITY.md).
