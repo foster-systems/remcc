@@ -91,7 +91,12 @@ if [ "$SKIP_SETUP" = 0 ]; then
   "packageManager": "pnpm@9.12.3"
 }
 JSON
-  touch pnpm-lock.yaml
+  # `touch pnpm-lock.yaml` produces an empty file that pnpm rejects as broken
+  # (ERR_PNPM_BROKEN_LOCKFILE) the moment the workflow runs
+  # `pnpm install --frozen-lockfile`. Run a real install instead — for a
+  # dep-free package.json this writes a minimal-but-valid 114-byte lockfile.
+  pnpm install --silent >/dev/null 2>&1 \
+    || { echo "pnpm install (seed lockfile) failed" >&2; exit 1; }
   mkdir -p openspec .claude
   # Seed a realistic operator-customized .claude/settings.json so the
   # overwrite assertion in Step 3 has something concrete to detect.
