@@ -131,11 +131,10 @@ if grep -qx "REMCC_APP_ID" <<<"$PRE_SECRETS"; then
 else
   pass "pre-state: no REMCC_APP_ID yet"
 fi
-PRE_SLUG="$(gh api "repos/$TARGET/actions/variables/REMCC_APP_SLUG" --jq .value 2>/dev/null || echo "")"
-if [ -z "$PRE_SLUG" ]; then
-  pass "pre-state: no REMCC_APP_SLUG variable yet"
-else
+if PRE_SLUG="$(gh api "repos/$TARGET/actions/variables/REMCC_APP_SLUG" --jq .value 2>/dev/null)" && [ -n "$PRE_SLUG" ]; then
   fail "pre-state: REMCC_APP_SLUG unexpectedly = $PRE_SLUG"
+else
+  pass "pre-state: no REMCC_APP_SLUG variable yet"
 fi
 
 # ----------------------------------------------------------------------------
