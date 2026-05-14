@@ -54,6 +54,17 @@ request for you to review and merge. Once merged, push a
 `change/<name>` branch carrying an OpenSpec proposal and the
 `opsx-apply` workflow takes over.
 
+To refresh the template-managed files at a newer remcc ref later,
+run the companion `upgrade` subcommand from the same kind of clean
+clone:
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/premeq/remcc/main/install.sh) upgrade
+```
+
+`upgrade` opens a `remcc-upgrade` PR with the template diff; see
+[docs/SETUP.md](docs/SETUP.md#upgrading-remcc) for the full flow.
+
 Prefer not to pipe a remote script to bash, or want to inspect first?
 The manual checklist in [docs/SETUP.md](docs/SETUP.md) is the verbatim
 fallback. Cost guidance: [docs/COSTS.md](docs/COSTS.md). Security

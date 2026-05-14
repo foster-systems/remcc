@@ -213,6 +213,29 @@ for n in protection rulesets actions-perms; do
 done
 
 # ----------------------------------------------------------------------------
+# Step 7 — re-run init after merge preserves installed_at (task 1.4 of
+# install-sh-upgrade). After merging the init PR, .remcc/version is on main;
+# re-running init should read it from origin/main and preserve installed_at.
+# Templates already match main, so the run hits "already up to date".
+# ----------------------------------------------------------------------------
+step "Step 7: re-run init after merge preserves installed_at"
+git checkout main
+gh pr merge --repo "$TARGET" remcc-init --merge --delete-branch >/dev/null
+git pull --ff-only >/dev/null
+
+INST_AT_BEFORE="$(jq -r .installed_at < .remcc/version)"
+pass "post-merge installed_at on main: $INST_AT_BEFORE"
+
+bash <(curl -fsSL "$INSTALL_URL") init ${INIT_REF_ARGS[@]+"${INIT_REF_ARGS[@]}"}
+pass "post-merge init exited 0"
+
+git fetch --quiet origin main
+INST_AT_AFTER="$(git show origin/main:.remcc/version | jq -r .installed_at)"
+[ "$INST_AT_BEFORE" = "$INST_AT_AFTER" ] \
+  && pass "installed_at preserved on origin/main: $INST_AT_AFTER" \
+  || fail "installed_at changed: $INST_AT_BEFORE → $INST_AT_AFTER"
+
+# ----------------------------------------------------------------------------
 # Cleanup
 # ----------------------------------------------------------------------------
 if [ "$CLEANUP" = 1 ]; then

@@ -12,9 +12,10 @@
 #
 # Subcommands:
 #   init          adopt remcc in the current working directory's repo
+#   upgrade       refresh template-managed files in an already-adopted repo
 #   --help        show this message
 #
-# Options (init):
+# Options (init, upgrade):
 #   --ref <ref>   remcc tag or commit to fetch templates from. Defaults to
 #                 the latest release tag on premeq/remcc, falling back to
 #                 'main' with a warning if no releases exist.
@@ -25,13 +26,20 @@ readonly REMCC_REPO="premeq/remcc"
 readonly REMCC_CLONE_URL="https://github.com/${REMCC_REPO}.git"
 readonly INIT_BRANCH="remcc-init"
 readonly INIT_COMMIT_SUBJECT="Adopt remcc via install.sh init"
+readonly UPGRADE_BRANCH="remcc-upgrade"
+readonly UPGRADE_COMMIT_SUBJECT="Upgrade remcc via install.sh upgrade"
 
 # Tempdir for the remcc source clone. Cleaned up on exit.
 REMCC_SRC_DIR=""
+# Tempdir for the pre-overwrite working-tree snapshot (upgrade only).
+UPGRADE_SNAPSHOT_DIR=""
 
 cleanup() {
   if [ -n "${REMCC_SRC_DIR}" ] && [ -d "${REMCC_SRC_DIR}" ]; then
     rm -rf "${REMCC_SRC_DIR}"
+  fi
+  if [ -n "${UPGRADE_SNAPSHOT_DIR}" ] && [ -d "${UPGRADE_SNAPSHOT_DIR}" ]; then
+    rm -rf "${UPGRADE_SNAPSHOT_DIR}"
   fi
 }
 trap cleanup EXIT
@@ -65,15 +73,18 @@ read_tty() {
 
 usage_root() {
   cat <<'USAGE'
-install.sh — adopt remcc (remote Claude Code) in a GitHub repo.
+install.sh — adopt or upgrade remcc (remote Claude Code) in a GitHub repo.
 
 Usage:
   install.sh <subcommand> [options]
   install.sh --help
 
 Subcommands:
-  init     Adopt remcc in the current repository (prereq check, GitHub-side
-           bootstrap, template-file install, pull request).
+  init      Adopt remcc in the current repository (prereq check, GitHub-side
+            bootstrap, template-file install, pull request).
+  upgrade   Refresh template-managed files in an already-adopted repo at a
+            newer remcc ref. Skips bootstrap (one-time `init` work). Opens
+            a pull request on branch `remcc-upgrade`.
 
 Run `install.sh <subcommand> --help` for subcommand-specific help.
 USAGE
@@ -122,6 +133,47 @@ Environment passthrough (consumed by gh-bootstrap.sh):
                         Prompted if unset.
   OPSX_APPLY_MODEL      Per-repo default Claude model alias.
   OPSX_APPLY_EFFORT     Per-repo default thinking-budget level.
+USAGE
+}
+
+usage_upgrade() {
+  cat <<'USAGE'
+install.sh upgrade — refresh remcc templates in an already-adopted repo.
+
+Usage:
+  install.sh upgrade [--ref <tag-or-sha>] [--help]
+
+Options:
+  --ref <ref>   remcc tag or commit to fetch templates from. Defaults to
+                the latest release tag on premeq/remcc, falling back to
+                'main' with a warning if no releases exist.
+
+Behavior:
+  1. Verifies the target was previously adopted: `.remcc/version` must
+     exist on `origin/main`. If it does not, the command exits non-zero
+     pointing at `install.sh init`.
+  2. Verifies the same prerequisites as `init` (admin on target,
+     OpenSpec initialised, pnpm-lock.yaml present, local tools).
+  3. Resolves a remcc ref and shallow-clones premeq/remcc at that ref
+     into a tempdir (cleaned up on exit).
+  4. Overwrites template-managed files in the working tree:
+       .github/workflows/opsx-apply.yml
+       .claude/settings.json
+       openspec/config.yaml
+       .remcc/version
+     `.remcc/version`'s `installed_at` is preserved from the previously
+     committed marker (read from `origin/remcc-upgrade:.remcc/version`
+     if that branch exists, otherwise from `origin/main:.remcc/version`).
+  5. If the resolved templates match what is already on `origin/main`,
+     prints `already up to date` and exits zero without creating a
+     branch or PR.
+  6. Creates branch `remcc-upgrade` from `main`, commits the template
+     diff, pushes (force-with-lease), and opens a pull request against
+     `main`. Re-running with an existing open `remcc-upgrade` PR does
+     not open a duplicate.
+
+`upgrade` does NOT re-run `gh-bootstrap.sh`. Branch protection,
+rulesets, secrets, and repository variables are one-time `init` work.
 USAGE
 }
 
@@ -232,6 +284,19 @@ verify_clean_main() {
   fi
 }
 
+# Upgrade pre-flight: refuse if `.remcc/version` is absent from origin/main.
+# Reads from origin/main rather than the working tree so the answer is
+# unambiguous about what is actually committed (and so it survives a future
+# branch rebuild from main). Runs BEFORE any GitHub mutation or file write.
+verify_marker_on_main() {
+  local repo="$1"
+  git fetch --quiet origin main 2>/dev/null \
+    || err "could not fetch origin/main from ${repo}; check network/auth"
+  if ! git cat-file -e origin/main:.remcc/version 2>/dev/null; then
+    err ".remcc/version not found on origin/main of ${repo}; this target has not been adopted yet — run 'install.sh init' first"
+  fi
+}
+
 # ----------------------------------------------------------------------------
 # Resolve the remcc ref, then shallow-clone into a tempdir.
 # ----------------------------------------------------------------------------
@@ -291,21 +356,17 @@ resolved_source_sha() {
 }
 
 write_version_marker() {
-  local target="$1" ref="$2" sha now
+  local target="$1" ref="$2" prev_json="$3" sha now prev_at
   sha="$(resolved_source_sha)"
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  # Preserve installed_at when re-installing the same source ref+sha, so that
-  # back-to-back runs produce bit-identical version markers (and therefore
-  # identical commit trees on the remcc-init branch).
-  if [ -f "${target}" ]; then
-    local prev_ref prev_sha prev_at
-    prev_ref="$(jq -r '.source_ref // empty' < "${target}" 2>/dev/null || true)"
-    prev_sha="$(jq -r '.source_sha // empty' < "${target}" 2>/dev/null || true)"
-    if [ "${prev_ref}" = "${ref}" ] && [ "${prev_sha}" = "${sha}" ]; then
-      prev_at="$(jq -r '.installed_at // empty' < "${target}" 2>/dev/null || true)"
-      [ -n "${prev_at}" ] && now="${prev_at}"
-    fi
+  # Preserve installed_at from the previously committed marker (caller passes
+  # the JSON bytes; empty means "no previous marker, stamp now"). Reads from a
+  # git ref rather than the working tree because the upgrade/init branch is
+  # rebuilt from main before the marker is written.
+  if [ -n "${prev_json}" ]; then
+    prev_at="$(printf '%s' "${prev_json}" | jq -r '.installed_at // empty' 2>/dev/null || true)"
+    [ -n "${prev_at}" ] && now="${prev_at}"
   fi
 
   mkdir -p "$(dirname -- "${target}")"
@@ -316,6 +377,15 @@ write_version_marker() {
   "installed_at": "${now}"
 }
 JSON
+}
+
+# Read .remcc/version from origin/<branch>. Fetches the branch silently
+# (failures are tolerated — a missing remote ref produces an empty string),
+# then `git show`s the file. Empty stdout means absent.
+read_marker_from_origin() {
+  local branch="$1"
+  git fetch --quiet origin "${branch}" 2>/dev/null || true
+  git show "origin/${branch}:.remcc/version" 2>/dev/null || true
 }
 
 # ----------------------------------------------------------------------------
@@ -336,11 +406,11 @@ snapshot_preexisting() {
 # ----------------------------------------------------------------------------
 
 install_templates() {
-  local ref="$1" path src
+  local ref="$1" prev_marker_json="$2" path src
   log "Installing template-managed files"
   for path in "${TEMPLATE_PATHS[@]}"; do
     if [ "${path}" = ".remcc/version" ]; then
-      write_version_marker "${path}" "${ref}"
+      write_version_marker "${path}" "${ref}" "${prev_marker_json}"
       sub "wrote ${path} (generated)"
       continue
     fi
@@ -484,6 +554,138 @@ push_and_open_pr() {
 }
 
 # ----------------------------------------------------------------------------
+# Upgrade-specific helpers.
+# ----------------------------------------------------------------------------
+
+# Capture pre-overwrite working-tree contents of each template path (except
+# the generated `.remcc/version`) into a tempdir. These feed the per-path
+# "Local diffs before upgrade" flag in the PR body — paths whose pre-upgrade
+# content diverges from the *previous* template are about to be overwritten
+# by the new template.
+snapshot_preupgrade_paths() {
+  local out="$1" path
+  for path in "${TEMPLATE_PATHS[@]}"; do
+    [ "${path}" = ".remcc/version" ] && continue
+    if [ -f "${path}" ]; then
+      mkdir -p "${out}/$(dirname -- "${path}")"
+      cp "${path}" "${out}/${path}"
+    fi
+  done
+}
+
+# Diff each pre-overwrite snapshot against the new template source.
+# Prints (newline-separated) the paths where the operator's tree differed
+# from the new template.
+compute_flagged_paths() {
+  local snap="$1" path src
+  for path in "${TEMPLATE_PATHS[@]}"; do
+    [ "${path}" = ".remcc/version" ] && continue
+    src="$(template_source_for "${path}")"
+    if [ -f "${snap}/${path}" ] && [ -f "${src}" ]; then
+      if ! diff -q "${snap}/${path}" "${src}" >/dev/null 2>&1; then
+        printf '%s\n' "${path}"
+      fi
+    fi
+  done
+}
+
+create_upgrade_branch() {
+  if git rev-parse --verify --quiet "${UPGRADE_BRANCH}" >/dev/null; then
+    git branch -D "${UPGRADE_BRANCH}" >/dev/null
+  fi
+  git checkout -b "${UPGRADE_BRANCH}" main >/dev/null
+}
+
+stage_and_commit_upgrade() {
+  local prev_ref="$1" prev_sha="$2" new_ref="$3" new_sha="$4"
+  git add -- "${TEMPLATE_PATHS[@]}"
+  if git diff --cached --quiet; then
+    return 1   # nothing to commit
+  fi
+  git commit -m "$(cat <<EOF
+${UPGRADE_COMMIT_SUBJECT}
+
+Upgrading remcc ${prev_ref} (${prev_sha}) -> ${new_ref} (${new_sha})
+
+Files refreshed by install.sh upgrade:
+  .github/workflows/opsx-apply.yml
+  .claude/settings.json
+  openspec/config.yaml
+  .remcc/version
+EOF
+)" >/dev/null
+  return 0
+}
+
+build_upgrade_pr_body() {
+  local repo="$1" prev_ref="$2" prev_sha="$3" new_ref="$4" new_sha="$5" flagged_paths="$6"
+
+  printf '## remcc upgrade\n\n'
+  printf 'This PR was opened by `install.sh upgrade`. It refreshes the\n'
+  printf 'template-managed files at a newer remcc ref.\n\n'
+  printf '**Upgrading remcc** `%s` (`%s`) → `%s` (`%s`)\n\n' \
+    "${prev_ref}" "${prev_sha}" "${new_ref}" "${new_sha}"
+
+  printf '### Files written\n\n'
+  local p
+  for p in "${TEMPLATE_PATHS[@]}"; do
+    printf -- '- `%s`\n' "${p}"
+  done
+  printf '\n'
+
+  if [ -n "${flagged_paths}" ]; then
+    printf '### Local diffs before upgrade\n\n'
+    printf 'These paths diverged from the previous template before this\n'
+    printf 'upgrade ran. The upgrade overwrote them with the new template;\n'
+    printf 'verify the merge in the PR diff below before merging.\n\n'
+    while IFS= read -r p; do
+      [ -z "${p}" ] && continue
+      printf -- '- `%s`\n' "${p}"
+    done <<<"${flagged_paths}"
+    printf '\n'
+  fi
+
+  printf '### What happens next\n\n'
+  printf 'The upgraded workflow takes effect on the next apply run after\n'
+  printf 'this PR merges. Your next `change/**` push on `%s` exercises\n' "${repo}"
+  printf 'the refreshed templates end-to-end — no separate smoke test is\n'
+  printf 'needed (you already ran one at `init`).\n'
+}
+
+push_and_open_upgrade_pr() {
+  local repo="$1" prev_ref="$2" prev_sha="$3" new_ref="$4" new_sha="$5" flagged_paths="$6"
+  local body existing_pr
+
+  # If the remote branch already matches our tree, skip the push.
+  git fetch origin "${UPGRADE_BRANCH}" >/dev/null 2>&1 || true
+  if git rev-parse --verify --quiet "refs/remotes/origin/${UPGRADE_BRANCH}" >/dev/null \
+     && [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse "origin/${UPGRADE_BRANCH}^{tree}")" ]; then
+    log "Branch ${UPGRADE_BRANCH} already in sync with origin; skipping push"
+  else
+    log "Pushing branch ${UPGRADE_BRANCH} to origin"
+    git push --force-with-lease -u origin "${UPGRADE_BRANCH}" >/dev/null 2>&1 \
+      || err "failed to push ${UPGRADE_BRANCH} to origin"
+  fi
+
+  # Idempotency: if a PR is already open for this branch, leave it.
+  existing_pr="$(gh pr list --repo "${repo}" --head "${UPGRADE_BRANCH}" --state open \
+                   --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+  if [ -n "${existing_pr}" ]; then
+    log "Pull request #${existing_pr} already open for ${UPGRADE_BRANCH}; not opening another"
+    return 0
+  fi
+
+  body="$(build_upgrade_pr_body "${repo}" "${prev_ref}" "${prev_sha}" "${new_ref}" "${new_sha}" "${flagged_paths}")"
+  log "Opening pull request"
+  gh pr create \
+    --base main \
+    --head "${UPGRADE_BRANCH}" \
+    --title "Upgrade remcc to ${new_ref} via install.sh upgrade" \
+    --body "${body}" \
+    || err "failed to open pull request"
+}
+
+# ----------------------------------------------------------------------------
 # `init` orchestration.
 # ----------------------------------------------------------------------------
 
@@ -498,7 +700,7 @@ cmd_init() {
     esac
   done
 
-  local repo ref preexisting
+  local repo ref preexisting prev_marker
   repo="$(resolve_target_repo)"
   log "Target repository: ${repo}"
 
@@ -513,11 +715,19 @@ cmd_init() {
   # can flag potential customization collisions.
   preexisting="$(snapshot_preexisting)"
 
+  # Resolve the previous .remcc/version contents so installed_at survives
+  # re-runs. origin/main is the authoritative source; working-tree is a
+  # fallback for the rare "first install on a clone whose main wasn't pushed".
+  prev_marker="$(read_marker_from_origin main)"
+  if [ -z "${prev_marker}" ] && [ -f .remcc/version ]; then
+    prev_marker="$(cat .remcc/version 2>/dev/null || true)"
+  fi
+
   # Run the GitHub-side bootstrap first; failures here leave the working
   # tree untouched (templates haven't been written yet).
   run_bootstrap
 
-  install_templates "${ref}"
+  install_templates "${ref}" "${prev_marker}"
 
   if [ -z "$(git status --porcelain -- "${TEMPLATE_PATHS[@]}")" ]; then
     log "already up to date"
@@ -539,6 +749,79 @@ cmd_init() {
 }
 
 # ----------------------------------------------------------------------------
+# `upgrade` orchestration.
+# ----------------------------------------------------------------------------
+
+cmd_upgrade() {
+  local explicit_ref=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) usage_upgrade; exit 0 ;;
+      --ref) shift; [ $# -gt 0 ] || err "--ref requires a value"; explicit_ref="$1"; shift ;;
+      --ref=*) explicit_ref="${1#--ref=}"; shift ;;
+      *) err "unknown option to upgrade: $1" ;;
+    esac
+  done
+
+  local repo ref prev_marker prev_ref prev_sha new_sha flagged_paths
+  repo="$(resolve_target_repo)"
+  log "Target repository: ${repo}"
+
+  # Pre-flight: marker must exist on origin/main BEFORE any other check that
+  # could mutate state. (verify_prereqs and verify_clean_main are read-only,
+  # but the task order is: marker-on-main → prereqs → clean-main.)
+  verify_marker_on_main "${repo}"
+
+  verify_prereqs "${repo}"
+  verify_clean_main
+
+  ref="$(resolve_ref "${explicit_ref}")"
+  log "Using remcc ref: ${ref}"
+  clone_remcc_at "${ref}"
+
+  # Snapshot pre-overwrite working-tree contents for per-path diff flagging.
+  UPGRADE_SNAPSHOT_DIR="$(mktemp -d -t remcc-upgrade-snap-XXXXXX)"
+  snapshot_preupgrade_paths "${UPGRADE_SNAPSHOT_DIR}"
+
+  # Resolve the previous marker: prefer origin/remcc-upgrade (re-run on an
+  # open upgrade PR) so installed_at stays stable across re-runs; fall back
+  # to origin/main (the pre-flight guaranteed it exists there).
+  prev_marker="$(read_marker_from_origin "${UPGRADE_BRANCH}")"
+  if [ -z "${prev_marker}" ]; then
+    prev_marker="$(read_marker_from_origin main)"
+  fi
+
+  install_templates "${ref}" "${prev_marker}"
+
+  # Empty-diff short-circuit: nothing changed vs. main, so don't branch/push.
+  if [ -z "$(git status --porcelain -- "${TEMPLATE_PATHS[@]}")" ]; then
+    log "already up to date"
+    sub "no template diff vs. ${repo}@main; nothing to commit"
+    exit 0
+  fi
+
+  # Compute paths whose pre-overwrite content differed from the new template
+  # (operator's tree diverged from what the previous template installed).
+  flagged_paths="$(compute_flagged_paths "${UPGRADE_SNAPSHOT_DIR}")"
+
+  prev_ref="$(printf '%s' "${prev_marker}" | jq -r '.source_ref // "unknown"' 2>/dev/null || echo unknown)"
+  prev_sha="$(printf '%s' "${prev_marker}" | jq -r '.source_sha // "unknown"' 2>/dev/null || echo unknown)"
+  new_sha="$(resolved_source_sha)"
+
+  create_upgrade_branch
+  if ! stage_and_commit_upgrade "${prev_ref}" "${prev_sha}" "${ref}" "${new_sha}"; then
+    log "already up to date"
+    sub "templates matched the staged tree; no commit created"
+    git checkout main >/dev/null 2>&1 || true
+    git branch -D "${UPGRADE_BRANCH}" >/dev/null 2>&1 || true
+    exit 0
+  fi
+
+  push_and_open_upgrade_pr "${repo}" "${prev_ref}" "${prev_sha}" "${ref}" "${new_sha}" "${flagged_paths}"
+  log "Done. Review the upgrade PR; the refreshed workflow takes effect on the next apply run after merge."
+}
+
+# ----------------------------------------------------------------------------
 # Dispatch.
 # ----------------------------------------------------------------------------
 
@@ -546,6 +829,7 @@ main() {
   case "${1:-}" in
     ''|-h|--help|help) usage_root; exit 0 ;;
     init) shift; cmd_init "$@" ;;
+    upgrade) shift; cmd_upgrade "$@" ;;
     *) printf 'unknown subcommand: %s\n\n' "$1" >&2; usage_root >&2; exit 1 ;;
   esac
 }

@@ -107,12 +107,63 @@ source ref. The file is JSON:
   from (default: the latest release tag, or `main` if no releases
   exist).
 - `source_sha` — the commit `git clone --depth 1` landed on, used by
-  the forthcoming `upgrade` subcommand to compute the diff between
-  installed and desired refs.
-- `installed_at` — ISO 8601 UTC timestamp, informational.
+  the `upgrade` subcommand to compute the diff between installed and
+  desired refs.
+- `installed_at` — ISO 8601 UTC timestamp recording the date the
+  operator first adopted remcc. **Preserved across upgrades**:
+  `install.sh upgrade` reads the previous marker from
+  `origin/main:.remcc/version` (or `origin/remcc-upgrade:.remcc/version`
+  on re-run) and re-uses its `installed_at` value so the field always
+  reflects first adoption, not most-recent refresh.
 
 The marker is committed by `install.sh init` as part of the adoption
 PR. Don't hand-edit it; treat it as the installer's bookmark.
+
+## Upgrading remcc
+
+Once a repository has been adopted via `install.sh init`, the
+companion `install.sh upgrade` subcommand refreshes the same four
+template-managed files at a newer remcc ref and opens a single PR
+for review. From a clean clone of the target repository on `main`:
+
+```sh
+cd <target-repo-clone>
+bash <(curl -fsSL https://raw.githubusercontent.com/premeq/remcc/main/install.sh) upgrade
+```
+
+The one-liner:
+
+1. Verifies `.remcc/version` exists on `origin/main`. If it does not,
+   the command exits non-zero and points you at `install.sh init` —
+   `upgrade` refuses to run on a never-adopted target.
+2. Re-runs the same prerequisite checks as `init` (admin on target,
+   OpenSpec initialised, `pnpm-lock.yaml` present, local tools).
+3. Resolves a remcc ref — by default the latest release tag on
+   `premeq/remcc`, overridable with `--ref <tag-or-sha>` — and
+   shallow-clones the repo at that ref into a tempdir.
+4. Overwrites the four template-managed files in the working tree
+   with the new templates. `.remcc/version`'s `installed_at` field
+   is preserved from the previously committed marker.
+5. If the new templates exactly match what is already on
+   `origin/main`, prints `already up to date` and exits zero
+   without creating a branch or PR.
+6. Otherwise, creates branch `remcc-upgrade` from `main`, commits
+   the template diff, pushes (force-with-lease), and opens a PR
+   titled `Upgrade remcc to <ref> via install.sh upgrade`. The PR
+   body shows both endpoints (`<old_ref> (<old_sha>) → <new_ref>
+   (<new_sha>)`), lists the files written, and flags any path whose
+   pre-upgrade working-tree content diverged from the previous
+   template (potential customization collision).
+
+`install.sh upgrade` does **not** re-run `gh-bootstrap.sh`. Branch
+protection, rulesets, secrets, and repository variables are one-time
+`init` work. It also does not trigger an `opsx-apply` run — the
+upgraded workflow takes effect on your next `change/**` push after
+the upgrade PR merges.
+
+Re-running `install.sh upgrade` while the upgrade PR is still open
+updates the existing PR's branch tip via force-with-lease rather than
+opening a duplicate.
 
 ## Manual fallback
 
