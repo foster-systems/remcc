@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.png" width="180" alt="remcc logo">
+<img src="assets/remcc-logo-2.png" width="180" alt="remcc logo">
 
 # remcc
 
