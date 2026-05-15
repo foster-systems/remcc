@@ -39,9 +39,7 @@ something unintended, the GitHub-side controls bound the blast radius.
 | Control | What it stops | Availability |
 |---|---|---|
 | Workflow `permissions:` limited to `contents: write, pull-requests: write` | The auto-provisioned `GITHUB_TOKEN` cannot read or write Actions secrets, packages, deployments, workflows, or repository administration. | Always |
-| Branch protection on `main` (PR required, no force-push, no deletion) | The bot cannot push to or rewrite history on the production branch. **Verified by negative test on the dogfood adopter 2026-05-10:** `git push origin HEAD:main` from inside the runner returns `remote rejected … push declined due to repository rule violations`. | Always |
-| Branch ruleset confining non-admin updates to `refs/heads/change/**` | The bot cannot create, update, delete, or non-fast-forward any branch outside `change/**`. The operator (admin) bypasses. **Verified together with branch protection on the dogfood adopter.** | Always |
-| Push ruleset blocking non-admin modifications to `.github/**` | **Load-bearing where available.** The bot cannot rewrite CI to widen its own permissions, change triggers, or delete protections. The operator (admin) bypasses. | **Org-owned repos only.** Unavailable on user-owned repos (see Limitations below). |
+| Branch ruleset on the default branch (only) requiring a PR with ≥1 approval and blocking force-push | The bot cannot land code on the production branch without an operator approving the PR, and cannot rewrite history. **The PR review is the single gate.** The operator (admin) bypasses for emergency merges. Deletion of the default branch is not blocked by this ruleset. | Always (user-owned and org-owned alike) |
 | Secret scanning + secret push protection | A push containing a credential that matches a known pattern (including Anthropic API keys) is rejected at push time. Backstop against `ANTHROPIC_API_KEY` accidentally landing in a commit. | Public repos free; private repos require GHAS. |
 | GitHub Actions log redaction of `${{ secrets.* }}` values | Secrets stored in the repo's secret store are redacted from job logs and step outputs. Does not catch secret-shaped content in *commits*. | Always |
 | Workflow trigger limited to `push: change/**` and `workflow_dispatch` | The agent only runs in a syntactically obvious branch namespace. Any push outside `change/**` does not trigger the agent. | Always |
@@ -54,7 +52,10 @@ per-operator personal access token. The App's installation token is
 minted at the start of every run (via `actions/create-github-app-token`),
 used for checkout, push, and PR creation, and discarded when the job
 ends. Tokens are short-lived (1 hour) and scoped to the installed
-repo only — they are **not** admin tokens.
+repo only — they are **not** admin tokens. The App is a non-admin
+actor, so the main-branch approval ruleset's admin bypass does
+**not** apply to it: the App can open a PR but cannot merge to the
+default branch without an operator approval.
 
 ### App permissions
 
@@ -70,14 +71,12 @@ The private key is the long-lived secret. An attacker with the
 `REMCC_APP_PRIVATE_KEY` can mint installation tokens for every repo
 the App is installed on. For each such repo they can:
 
-- Push to `change/**` (the branch ruleset's bypass list does **not**
-  include the App; the App is a non-admin actor, so admin-only
-  controls still hold).
-- Push under `.github/workflows/` on org repos where the push ruleset
-  blocks `.github/**` to non-admins — same answer: the ruleset
-  applies to the App. On user-owned targets without the push ruleset,
-  the substitution (operator PR review) still applies.
-- Open pull requests as `<slug>[bot]`.
+- Push to any non-default branch (the bootstrap installs no
+  branch-namespace or path restrictions on the bot; the only gate
+  is the default-branch approval ruleset, which blocks merging,
+  not pushing).
+- Open pull requests as `<slug>[bot]`. Such PRs cannot land on the
+  default branch without an operator's approval.
 
 What the key **cannot** do, because the App has no such permissions:
 read or write Actions secrets, modify repo settings, manage
@@ -116,25 +115,13 @@ account's repo permissions, and (under "PR author cannot approve the
 same PR" rules) blocks the operator from reviewing the bot's PRs.
 The App identity is a separate actor: the operator (admin on the
 adopter repo) can code-review and approve the App's PRs and merge
-through normal branch protection. The R3 unlock is the primary
+through the approval ruleset. The R3 unlock is the primary
 motivation; the credential-shape improvement is the secondary win.
 
-## Limitations on user-owned and private-without-GHAS repositories
+## Limitations on private-without-GHAS repositories
 
-Two of the Layer 2 controls in the table above are not universally
-available. The `add-apply-via-github-actions` dogfood on a private
-user-owned target (2026-05-10) surfaced both:
-
-- **Push rulesets are an organization-level GitHub feature.** GitHub
-  rejects `POST /repos/.../rulesets` with `target: push` on
-  user-owned repos with `"Source only org-owned repos can have push
-  rules"`. The `.github/**` blocking rule cannot exist on a
-  user-owned target. `gh-bootstrap.sh` detects this and skips with a
-  warning. The substitution: every agent PR's diff is reviewed by
-  the operator before merge, and `.github/**` modifications are
-  caught there. Treat any `.github/**` change in an agent PR as
-  attention-worthy — under the full model the bot could not produce
-  it; on user-owned targets it can.
+One of the Layer 2 controls in the table above is not universally
+available:
 
 - **Secret scanning + push protection on private repos require
   GitHub Advanced Security**, an organization-level paid feature.
@@ -147,38 +134,30 @@ user-owned target (2026-05-10) surfaced both:
   this configuration should pay extra attention to commit diffs in
   agent PRs.
 
-If the full Layer 2 model matters, host the target repository under
-a GitHub organization with GHAS. There is no remcc-side workaround
-for these GitHub-platform constraints; they are not bugs in the
-bootstrap script. The operator chooses the trade deliberately.
+If the secret-scanning backstop matters to you, host the target
+repository on a plan where secret scanning is available. There is
+no remcc-side workaround.
 
-### The `.github/**` push restriction is load-bearing
+### PR review is the load-bearing control
 
-If the agent could modify files under `.github/**`, every other
-control above would be reachable from inside a run:
-
-- It could change the workflow's `permissions:` block to grant more
-  scopes.
-- It could change the trigger pattern to broaden where it runs.
-- It could remove the timeout, the apply-skill invocation, or the
-  validation step.
-- It could edit the workflow to push to other branches under a
-  different actor identity (via PAT or App credentials checked in
-  to the repo as part of the change).
-
-The push ruleset blocking `.github/**` is therefore not a hardening
-control but a foundational one — *where it exists*. If you ever
-find yourself disabling this ruleset on an org repo, treat it as
-turning off the only thing keeping the agent from rewriting the
+The bot has no ref-level or path-level restrictions: it can push
+any branch other than the default and can modify any path
+including `.github/**`. Nothing prevents it from *proposing* a
+change that rewrites the workflow, removes the apply-skill
+invocation, broadens the trigger pattern, or otherwise alters the
 rules of the game.
 
-The operator (admin) bypasses this rule and can edit `.github/**`
-through the normal PR flow. That asymmetry is the whole point.
+What stops such a change from taking effect is the operator's PR
+review and approval on the merge to the default branch. The
+approval ruleset is therefore not a hardening control among many
+— it is the foundational control. Treat every agent PR diff with
+attention to `.github/**` changes, workflow edits, permission
+widening, and trigger broadening; these are the categories an
+adversarial agent would target first.
 
-On user-owned targets where the ruleset cannot exist (see
-Limitations above), the operator's PR review takes the place of the
-ruleset. Read agent PR diffs with explicit attention to anything
-under `.github/**`.
+If you ever find yourself disabling the approval ruleset on a
+remcc adopter, treat it as turning off the only thing keeping the
+agent's output from auto-landing on the default branch.
 
 ## What this model does NOT protect against
 

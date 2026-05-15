@@ -41,7 +41,7 @@ From a clean clone of the target repository on `main`:
 bash <(curl -fsSL https://raw.githubusercontent.com/premeq/remcc/main/install.sh) init
 ```
 
-Verifies prerequisites, configures GitHub-side controls (branch protection, rulesets, secrets, apply defaults), writes the workflow and template files, and opens a `remcc-init` PR for you to merge. See [docs/SETUP.md](docs/SETUP.md).
+Verifies prerequisites, configures GitHub-side controls (default-branch approval ruleset, secret scanning, secrets, `opsx:apply` defaults), writes the workflow and template files, and opens a `remcc-init` PR for you to merge. See [docs/SETUP.md](docs/SETUP.md).
 
 ### `03` · Propose a change locally
 
@@ -72,7 +72,7 @@ The `opsx-apply` workflow spins up an ephemeral `ubuntu-latest` runner, executes
 
 ### `06` · PR opened by the remcc GitHub App
 
-The App pushes the apply output and opens a PR to `main` as `<app-slug>[bot]` — a distinct actor from you, so branch protection lets you review and approve. Apply errors land as a draft PR with logs attached.
+The App pushes the apply output and opens a PR to `main` as `<app-slug>[bot]` — a distinct actor from you, so the default-branch approval ruleset lets you review and approve it (the bot can't approve its own PR). Apply errors land as a draft PR with logs attached.
 
 ---
 

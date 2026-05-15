@@ -8,12 +8,17 @@
 #   bash gh-bootstrap.sh --help
 #
 # What this script touches on the GitHub side:
-#   - Branch protection on `main` (PR required, no force push, no deletions).
-#   - A branch ruleset blocking non-admin updates to refs that do not match
-#     `refs/heads/change/**`. The workflow's GITHUB_TOKEN is therefore confined
-#     to `change/**` branches; the operator (admin) bypasses.
-#   - A push ruleset blocking modifications to paths under `.github/**`. The
-#     bot is therefore unable to rewrite CI; the operator (admin) bypasses.
+#   - A branch ruleset on the repository's default branch (only) that requires
+#     a pull request and at least one approval to merge and blocks force-push.
+#     The operator (admin) bypasses for emergency merges. Deletion of the
+#     default branch is intentionally NOT blocked by this ruleset.
+#
+#     This script does NOT touch any pre-existing branch protection or any
+#     prior-version remcc-managed rulesets. Adopters upgrading from prior
+#     versions keep whatever legacy controls they already have until they
+#     remove them themselves in the GitHub UI (Settings -> Branches,
+#     Settings -> Rules -> Rulesets). See docs/SETUP.md for the exact opt-in
+#     recipe.
 #   - Secret scanning + secret push protection on the repository.
 #   - The repository secret ANTHROPIC_API_KEY (prompted or read from env).
 #   - The repository secrets REMCC_APP_ID and REMCC_APP_PRIVATE_KEY (prompted
@@ -46,8 +51,7 @@
 
 set -euo pipefail
 
-readonly RULESET_BRANCH_NAME="remcc: restrict bot to change branches"
-readonly RULESET_PUSH_NAME="remcc: block bot edits under .github"
+readonly RULESET_MAIN_NAME="remcc: require approval on main"
 readonly ROLE_ID_ADMIN=5
 
 # ----------------------------------------------------------------------------
@@ -73,91 +77,43 @@ resolve_repo() {
 }
 
 # ----------------------------------------------------------------------------
-# Branch protection on main
+# Main-branch approval ruleset
+#
+# This script installs a single repository branch ruleset on the default
+# branch (only) requiring a pull request and at least one approval to merge,
+# and blocking force-push. Admin (RepositoryRole 5) bypasses. No other
+# ref/path-level interdiction is installed — PR review on merge is the gate.
+#
+# This script does NOT touch any pre-existing branch protection (legacy
+# /branches/<name>/protection endpoint) or any prior-version remcc-managed
+# rulesets. Adopters upgrading from prior versions keep their legacy items
+# in place; converging to the new model is a manual UI action.
 # ----------------------------------------------------------------------------
 
-want_branch_protection_json() {
-  cat <<'JSON'
-{
-  "required_status_checks": null,
-  "enforce_admins": false,
-  "required_pull_request_reviews": { "required_approving_review_count": 0 },
-  "restrictions": null,
-  "allow_force_pushes": false,
-  "allow_deletions": false,
-  "block_creations": false,
-  "required_conversation_resolution": false,
-  "lock_branch": false,
-  "allow_fork_syncing": false
-}
-JSON
-}
-
-configure_main_protection() {
-  local repo="$1"
-  log "Branch protection on main (${repo})"
-  want_branch_protection_json \
-    | gh api --method PUT "repos/${repo}/branches/main/protection" --input - >/dev/null
-  sub "applied"
-}
-
-remove_main_protection() {
-  local repo="$1"
-  log "Removing branch protection on main (${repo})"
-  if gh api "repos/${repo}/branches/main/protection" --silent >/dev/null 2>&1; then
-    gh api --method DELETE "repos/${repo}/branches/main/protection" >/dev/null
-    sub "removed"
-  else
-    sub "already absent"
-  fi
-}
-
-# ----------------------------------------------------------------------------
-# Rulesets
-# ----------------------------------------------------------------------------
-
-want_branch_ruleset_json() {
+want_main_ruleset_json() {
   cat <<JSON
 {
-  "name": "${RULESET_BRANCH_NAME}",
+  "name": "${RULESET_MAIN_NAME}",
   "target": "branch",
   "enforcement": "active",
   "conditions": {
     "ref_name": {
-      "include": ["~ALL"],
-      "exclude": ["refs/heads/change/**"]
-    }
-  },
-  "rules": [
-    { "type": "creation" },
-    { "type": "update" },
-    { "type": "deletion" },
-    { "type": "non_fast_forward" }
-  ],
-  "bypass_actors": [
-    { "actor_id": ${ROLE_ID_ADMIN}, "actor_type": "RepositoryRole", "bypass_mode": "always" }
-  ]
-}
-JSON
-}
-
-want_push_ruleset_json() {
-  cat <<JSON
-{
-  "name": "${RULESET_PUSH_NAME}",
-  "target": "push",
-  "enforcement": "active",
-  "conditions": {
-    "ref_name": {
-      "include": ["~ALL"],
+      "include": ["~DEFAULT_BRANCH"],
       "exclude": []
     }
   },
   "rules": [
     {
-      "type": "file_path_restriction",
-      "parameters": { "restricted_file_paths": [".github/**"] }
-    }
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 1,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false
+      }
+    },
+    { "type": "non_fast_forward" }
   ],
   "bypass_actors": [
     { "actor_id": ${ROLE_ID_ADMIN}, "actor_type": "RepositoryRole", "bypass_mode": "always" }
@@ -170,16 +126,6 @@ find_ruleset_id() {
   local repo="$1" name="$2"
   gh api "repos/${repo}/rulesets" --jq ".[] | select(.name==\"${name}\") | .id" 2>/dev/null \
     | head -n1
-}
-
-owner_type() {
-  local repo="$1"
-  gh api "repos/${repo}" --jq .owner.type 2>/dev/null
-}
-
-push_rulesets_supported() {
-  local repo="$1"
-  [ "$(owner_type "${repo}")" = "Organization" ]
 }
 
 reconcile_ruleset() {
@@ -196,24 +142,10 @@ reconcile_ruleset() {
   fi
 }
 
-configure_branch_ruleset() {
+configure_main_ruleset() {
   local repo="$1"
-  log "Branch ruleset (bot confined to refs/heads/change/**)"
-  reconcile_ruleset "${repo}" "${RULESET_BRANCH_NAME}" "$(want_branch_ruleset_json)"
-}
-
-configure_push_ruleset() {
-  local repo="$1"
-  log "Push ruleset (bot blocked from editing .github/**)"
-  if ! push_rulesets_supported "${repo}"; then
-    sub "WARNING: GitHub push rulesets are only available on organization-owned"
-    sub "repositories. ${repo} is user-owned, so the .github/** push restriction"
-    sub "cannot be enforced via rulesets. The branch ruleset still confines the"
-    sub "bot to change/** branches; .github/** edits within agent PRs must be"
-    sub "caught by your PR review. See docs/SECURITY.md for the full picture."
-    return 0
-  fi
-  reconcile_ruleset "${repo}" "${RULESET_PUSH_NAME}" "$(want_push_ruleset_json)"
+  log "Main-branch approval ruleset (default branch only; PR + 1 approval; blocks force-push)"
+  reconcile_ruleset "${repo}" "${RULESET_MAIN_NAME}" "$(want_main_ruleset_json)"
 }
 
 remove_ruleset_by_name() {
@@ -590,20 +522,11 @@ remove_apply_config_variables() {
 # ----------------------------------------------------------------------------
 
 snapshot_state() {
-  local repo="$1" bid pid name secret_names
-  echo "# branch protection on main"
-  gh api "repos/${repo}/branches/main/protection" 2>/dev/null \
-    | jq 'del(.url, .self_link, .urls)' || true
-  echo "# branch ruleset"
-  bid="$(find_ruleset_id "${repo}" "${RULESET_BRANCH_NAME}" || true)"
-  if [ -n "${bid:-}" ]; then
-    gh api "repos/${repo}/rulesets/${bid}" \
-      | jq 'del(.id, .updated_at, .created_at, ._links, .links, .source_type, .source, .node_id)' || true
-  fi
-  echo "# push ruleset"
-  pid="$(find_ruleset_id "${repo}" "${RULESET_PUSH_NAME}" || true)"
-  if [ -n "${pid:-}" ]; then
-    gh api "repos/${repo}/rulesets/${pid}" \
+  local repo="$1" mid name secret_names
+  echo "# main ruleset"
+  mid="$(find_ruleset_id "${repo}" "${RULESET_MAIN_NAME}" || true)"
+  if [ -n "${mid:-}" ]; then
+    gh api "repos/${repo}/rulesets/${mid}" \
       | jq 'del(.id, .updated_at, .created_at, ._links, .links, .source_type, .source, .node_id)' || true
   fi
   echo "# security_and_analysis"
@@ -641,9 +564,7 @@ run_idempotency_smoke_test() {
   local repo="$1" before after
   log "Idempotency smoke test"
   before="$(snapshot_state "${repo}")"
-  configure_main_protection "${repo}"
-  configure_branch_ruleset "${repo}"
-  configure_push_ruleset "${repo}"
+  configure_main_ruleset "${repo}"
   configure_secret_scanning "${repo}"
   configure_actions_pr_creation "${repo}"
   configure_remcc_app_slug_variable "${repo}"
@@ -692,9 +613,7 @@ install_remcc() {
   repo="$(resolve_repo)"
   log "Target repository: ${repo}"
 
-  configure_main_protection "${repo}"
-  configure_branch_ruleset "${repo}"
-  configure_push_ruleset "${repo}"
+  configure_main_ruleset "${repo}"
   configure_secret_scanning "${repo}"
   configure_actions_pr_creation "${repo}"
   configure_anthropic_secret "${repo}"
@@ -716,9 +635,7 @@ uninstall_remcc() {
   repo="$(resolve_repo)"
   log "Target repository: ${repo}"
 
-  remove_ruleset_by_name "${repo}" "${RULESET_BRANCH_NAME}"
-  remove_ruleset_by_name "${repo}" "${RULESET_PUSH_NAME}"
-  remove_main_protection "${repo}"
+  remove_ruleset_by_name "${repo}" "${RULESET_MAIN_NAME}"
   disable_secret_scanning "${repo}"
   disable_actions_pr_creation "${repo}"
   remove_anthropic_secret "${repo}"

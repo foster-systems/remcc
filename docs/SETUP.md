@@ -38,8 +38,8 @@ proceeding.
 The `opsx-apply` workflow authenticates as a dedicated GitHub App, so
 the pull request it opens is authored by `<app-slug>[bot]` — a distinct
 GitHub actor from you. This lets you code-review and merge the bot's
-PR without bypassing branch protection ("the author cannot approve
-their own PR").
+PR without colliding with the default-branch approval ruleset ("the
+author cannot approve their own PR").
 
 You create the App **once**, under your personal account (or your
 organisation), then install it on every adopter repository and reuse
@@ -293,9 +293,10 @@ cp "${REMCC}/templates/workflows/opsx-apply.yml" .github/workflows/opsx-apply.ym
 ```
 
 The `setup-remcc` branch is a regular feature branch — *not* a
-`change/**` branch. After step 3, the `change/**` namespace is
-restricted to the workflow's bot identity, and the bootstrap
-configuration would block your local pushes to such a branch.
+`change/**` branch. The `change/**` namespace is the workflow's
+trigger pattern (see "How to trigger a run" below); using it for
+unrelated setup work would either spam apply runs (if your commit
+subject accidentally matches `@change-apply`) or just be confusing.
 
 ### `.claude/settings.json` — merge, don't overwrite
 
@@ -388,32 +389,29 @@ bash "${REMCC}/templates/gh-bootstrap.sh"
 The script:
 
 1. Verifies `gh` is authenticated and you are inside a git repo.
-2. Configures branch protection on `main` (PR required, no force
-   push, no deletions).
-3. Creates a **branch ruleset** that blocks any non-admin actor from
-   creating, updating, deleting, or non-fast-forwarding refs that
-   do not match `refs/heads/change/**`. The workflow's
-   `GITHUB_TOKEN` is therefore confined to `change/**`. Admin
-   bypasses, so you keep direct access.
-4. Creates a **push ruleset** blocking non-admin pushes that modify
-   paths under `.github/**`, **if the target is an
-   organization-owned repo**. On user-owned repos, push rulesets
-   are unavailable — the script prints a warning and continues.
-   On user-owned repos, `.github/**` modifications must be caught
-   during your PR review.
-5. Enables **secret scanning + secret push protection**, **if the
+2. Creates a single **branch ruleset** on the repository's
+   **default branch only** that requires a pull request and at
+   least one approval to merge and blocks force-push. Deletion of
+   the default branch is not blocked by this ruleset. Admin
+   bypasses, so you can still perform emergency merges. The
+   ruleset is named `remcc: require approval on main` and applies
+   identically to user-owned and organization-owned repos. The
+   script installs no other ref-level or path-level controls —
+   your PR review is the single gate keeping agent output off the
+   default branch.
+3. Enables **secret scanning + secret push protection**, **if the
    feature is available** for the target repo. Public repos get it
    for free; private repos require GitHub Advanced Security. On
    private repos without GHAS, the script prints a warning and
    continues. The remaining secret-leak protection is GitHub
    Actions log redaction (built into Actions, no setup required).
-6. Enables the GitHub Actions setting that allows `GITHUB_TOKEN`
+4. Enables the GitHub Actions setting that allows `GITHUB_TOKEN`
    to open pull requests. This setting defaults to off; without it,
    the workflow's PR-creation step always fails.
-7. Prompts for `ANTHROPIC_API_KEY` (input hidden) and uploads it as
+5. Prompts for `ANTHROPIC_API_KEY` (input hidden) and uploads it as
    the repository secret. If the variable is already set in your
    shell, the script picks it up and does not prompt.
-8. Prompts for `REMCC_APP_ID` and `REMCC_APP_PRIVATE_KEY` (input
+6. Prompts for `REMCC_APP_ID` and `REMCC_APP_PRIVATE_KEY` (input
    hidden) and uploads each as a repository secret. The workflow
    exchanges these for a short-lived GitHub App installation token
    at the start of every run, and uses that token for checkout,
@@ -422,35 +420,60 @@ The script:
    produce these values. If both variables are already set in
    your shell (PEM via `REMCC_APP_PRIVATE_KEY="$(cat key.pem)"`),
    the script picks them up and does not prompt.
-9. Prompts for `REMCC_APP_SLUG` (input visible — the slug is not
+7. Prompts for `REMCC_APP_SLUG` (input visible — the slug is not
    secret) and writes it as a repository **variable** (not a
    secret). The workflow constructs the bot's commit identity
    from this slug. Empty input is a hard error. If the variable
    is already set in your shell, the script picks it up.
-10. If a legacy `WORKFLOW_PAT` secret is present (from a previous
+8. If a legacy `WORKFLOW_PAT` secret is present (from a previous
    remcc release), it is deleted now that the App credentials are
    in place. Re-running the script when `WORKFLOW_PAT` is already
    gone is a no-op.
-11. Prompts for `OPSX_APPLY_MODEL` and `OPSX_APPLY_EFFORT` — the
+9. Prompts for `OPSX_APPLY_MODEL` and `OPSX_APPLY_EFFORT` — the
    per-repo defaults for the `/opsx:apply` step. Empty input
    leaves the variable unset, in which case the workflow's
    baked-in defaults (`sonnet` / `high`) apply. The script reads
    `OPSX_APPLY_MODEL` / `OPSX_APPLY_EFFORT` from the environment
    if set, so the prompts can be skipped in scripted runs. See
    "Configuring the apply model" below for what these knobs do.
-12. Runs an idempotency smoke test: re-applies every change and
-   diffs the resulting state. A diff is a bug — please report it.
+10. Runs an idempotency smoke test: re-applies every change and
+    diffs the resulting state. A diff is a bug — please report it.
 
 Re-running the script later is a no-op.
 
-> **What this means for user-owned private repos.** The model loses
-> two outside-the-runner controls on user-owned private targets
-> (push ruleset and secret scanning). The bot is still confined to
-> `change/**` and cannot push to `main`. The substitutions —
-> `.github/**` is gated by your PR review; secret-shaped commits
-> are not blocked at push time, only redacted from logs — are
-> documented in `SECURITY.md`. If you need the full model, host
-> the target repo under a GitHub organization with GHAS.
+> **What this means for private-without-GHAS targets.** The model
+> loses one outside-the-runner control on these targets (secret
+> scanning). Secret-shaped commits are not blocked at push time,
+> only redacted from logs — documented in `SECURITY.md`. The
+> default-branch approval ruleset still applies; the bot still
+> cannot land on the default branch without your review.
+
+### Opting in from a prior-version adopter
+
+If your repo was bootstrapped under a previous remcc release, it
+carries legacy GitHub-side controls that this version of
+`gh-bootstrap.sh` **does not modify or remove**: branch protection
+on `main` (legacy `branches/main/protection` endpoint), a ruleset
+named `remcc: restrict bot to change branches`, and (on org-owned
+repos) a ruleset named `remcc: block bot edits under .github`.
+
+Re-running the updated bootstrap on such a repo adds the new
+`remcc: require approval on main` ruleset alongside the legacy
+items — the resulting state is strictly more restrictive than the
+new default, but untidy. To converge to the new single-ruleset
+model:
+
+1. Open GitHub → Settings → Rules → Rulesets and delete
+   `remcc: restrict bot to change branches` and (if present)
+   `remcc: block bot edits under .github`.
+2. Open GitHub → Settings → Branches and remove protection on the
+   `main` branch.
+3. Re-run `gh-bootstrap.sh`. It reconciles the new ruleset and
+   the idempotency smoke test passes with no diff.
+
+This is a one-time manual opt-in. Skipping it leaves your repo
+with both old and new controls in place; that's a supported state
+(strictly safer), just not the new default.
 
 ### If a step fails
 
@@ -750,16 +773,24 @@ remcc is reversible. To remove it from a target repository:
    ```sh
    bash "${REMCC}/templates/gh-bootstrap.sh" --uninstall
    ```
-   This deletes any rulesets the script created, removes branch
-   protection on `main`, disables secret scanning + push protection
-   (where applicable), reverts the Allow-Actions-create-PRs toggle,
-   and deletes the `ANTHROPIC_API_KEY`, `REMCC_APP_ID`, and
-   `REMCC_APP_PRIVATE_KEY` repository secrets and the `REMCC_APP_SLUG`
-   repository variable. (Any pre-existing legacy `WORKFLOW_PAT`
-   secret is also removed.) It does not touch any files in your
-   repository, and it does not delete the GitHub App itself or
-   revoke its private key — manage those at
-   <https://github.com/settings/apps>.
+   This deletes the `remcc: require approval on main` ruleset,
+   disables secret scanning + push protection (where applicable),
+   reverts the Allow-Actions-create-PRs toggle, and deletes the
+   `ANTHROPIC_API_KEY`, `REMCC_APP_ID`, and `REMCC_APP_PRIVATE_KEY`
+   repository secrets and the `REMCC_APP_SLUG` repository variable.
+   (Any pre-existing legacy `WORKFLOW_PAT` secret is also removed.)
+   It does not touch any files in your repository, and it does not
+   delete the GitHub App itself or revoke its private key — manage
+   those at <https://github.com/settings/apps>.
+
+   **Note for prior-version adopters:** `--uninstall` removes only
+   what this version of the script manages. If your repo still
+   carries legacy GitHub-side controls from an earlier remcc
+   release — branch protection on `main`, a ruleset named
+   `remcc: restrict bot to change branches`, or a ruleset named
+   `remcc: block bot edits under .github` — those are **not**
+   removed. Delete them manually in GitHub → Settings → Branches
+   and Settings → Rules → Rulesets.
 2. **Workflow file** — delete it from the repository:
    ```sh
    git rm .github/workflows/opsx-apply.yml

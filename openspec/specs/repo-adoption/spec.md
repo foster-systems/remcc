@@ -9,9 +9,7 @@ GitHub-side configuration the bootstrap script applies (idempotently),
 the documentation set, the smoke-test procedure, and the
 reversibility guarantee. The companion capability `apply-workflow`
 defines what the workflow itself does once installed.
-
 ## Requirements
-
 ### Requirement: Adoption prerequisites documented
 
 The repo SHALL document the prerequisites a target repository MUST
@@ -96,60 +94,6 @@ to apply the GitHub-side configuration the safety contract requires.
   in the same target repo
 - **THEN** the second invocation produces no diffs in repo
   configuration and exits zero
-
-### Requirement: Bootstrap configures branch protection on main
-
-`gh-bootstrap.sh` SHALL configure branch protection on the target
-repo's `main` branch such that direct pushes are blocked, force
-pushes are blocked, and a pull request is required for merging.
-
-#### Scenario: Direct push to main is rejected after bootstrap
-
-- **WHEN** the operator runs `gh-bootstrap.sh` on a fresh repo
-- **AND** subsequently attempts `git push origin main` from a local
-  checkout with new commits
-- **THEN** GitHub rejects the push citing branch protection
-
-### Requirement: Bootstrap restricts bot to change/** branches
-
-`gh-bootstrap.sh` SHALL configure a repository branch ruleset that
-prevents non-admin actors from creating, updating, deleting, or
-non-fast-forwarding any ref except those matching
-`refs/heads/change/**`. Branch rulesets are available on both
-user-owned and organization-owned repositories.
-
-#### Scenario: Bot push to a non-change branch is rejected
-
-- **WHEN** the workflow attempts to push commits to a branch not
-  matching `change/**` using `GITHUB_TOKEN`
-- **THEN** the push is rejected by the ruleset and branch protection
-
-### Requirement: Bootstrap configures .github/** push ruleset when supported
-
-`gh-bootstrap.sh` SHALL configure a repository push ruleset blocking
-non-admin pushes that modify any path under `.github/**`, **when the
-target repository is organization-owned**. GitHub does not support
-push rulesets on user-owned repositories; on user-owned targets the
-script SHALL emit a clear warning identifying the limitation,
-SHALL NOT fail, and SHALL continue with the remaining bootstrap
-steps. SETUP.md and SECURITY.md document the resulting reliance on
-PR review.
-
-#### Scenario: Org-owned target gets the push ruleset
-
-- **WHEN** the operator runs `gh-bootstrap.sh` against an
-  organization-owned repository
-- **THEN** the script creates the push ruleset and the workflow
-  attempting to push commits modifying `.github/**` from a
-  `change/**` branch is rejected
-
-#### Scenario: User-owned target produces a documented warning
-
-- **WHEN** the operator runs `gh-bootstrap.sh` against a user-owned
-  repository
-- **THEN** the script prints a warning that push rulesets are
-  unavailable and that `.github/**` enforcement falls to PR review,
-  and continues with subsequent steps
 
 ### Requirement: Bootstrap enables secret scanning and push protection when supported
 
@@ -463,3 +407,123 @@ in `remcc-cli`.
 
 - **WHEN** the operator runs `gh-bootstrap.sh` on a target where `WORKFLOW_PAT` is already absent
 - **THEN** the WORKFLOW_PAT-removal step prints a clear "already absent" message and exits zero, with no API calls that mutate state
+
+### Requirement: Bootstrap configures main-branch approval ruleset
+
+`gh-bootstrap.sh` SHALL configure a single repository **branch
+ruleset** targeting the repository's default branch **only** —
+via the GitHub ruleset condition `ref_name.include: ["~DEFAULT_BRANCH"]`
+with `exclude: []` — whose rule set is **exactly** the
+following, no more and no less:
+
+- A `pull_request` rule with `required_approving_review_count: 1`
+  (requires a pull request and at least one approval to merge
+  into the default branch).
+- A `non_fast_forward` rule (blocks force-push to the default
+  branch).
+- `bypass_actors`: the `RepositoryRole` admin (role id `5`) with
+  `bypass_mode: always`, so the operator (admin) can still merge
+  their own changes and perform emergency operations.
+
+The ruleset SHALL NOT include a `deletion` rule, a
+`creation` rule, status-check gating, signed-commit enforcement,
+linear-history requirement, or any other rule beyond the two
+listed above. Deletion of the default branch is intentionally
+not blocked by this ruleset.
+
+The ruleset SHALL be named `remcc: require approval on main` so
+the new control is identifiable in the GitHub UI. The ruleset
+SHALL apply uniformly to user-owned and organization-owned
+repositories — no conditional branching on ownership type.
+
+The bootstrap SHALL NOT modify, delete, or inspect any
+pre-existing GitHub-side controls on the target repository,
+including (but not limited to) branch protection on `main`
+configured via the `branches/main/protection` endpoint and
+rulesets named `remcc: restrict bot to change branches` or
+`remcc: block bot edits under .github`. The new ruleset is
+installed alongside whatever exists; legacy controls remain
+untouched until the operator removes them by hand.
+
+#### Scenario: Direct push to default branch is rejected after bootstrap on a new adopter
+
+- **WHEN** the operator runs `gh-bootstrap.sh` on a fresh repo
+  that has no pre-existing remcc-managed controls
+- **AND** subsequently attempts `git push origin main` from a
+  local checkout with new commits as a non-admin actor
+- **THEN** GitHub rejects the push citing the ruleset
+
+#### Scenario: PR merge to default branch requires an approval
+
+- **WHEN** the workflow opens a PR targeting the default branch
+  and no reviewer has approved it
+- **THEN** the merge button is disabled / the merge API call is
+  rejected citing the missing approval, regardless of repo
+  ownership type
+
+#### Scenario: Force-push to the default branch is rejected
+
+- **WHEN** any actor (including admin via a token without bypass)
+  attempts a force-push to the default branch on a repo
+  configured by `gh-bootstrap.sh`
+- **THEN** GitHub rejects the push citing the ruleset's
+  `non_fast_forward` rule
+
+#### Scenario: Deletion of the default branch is not blocked by this ruleset
+
+- **WHEN** an actor with delete permission deletes the default
+  branch on a repo whose only remcc-managed control is the new
+  ruleset
+- **THEN** the deletion succeeds (the ruleset does not include a
+  `deletion` rule — out of scope for this change)
+
+#### Scenario: Ruleset does not apply to non-default branches
+
+- **WHEN** a non-admin actor pushes commits to any branch other
+  than the default branch (e.g. `change/foo`, `feature/bar`) in a
+  repo configured by `gh-bootstrap.sh`
+- **THEN** the push is accepted; the approval ruleset does not
+  block it (the ruleset's `ref_name.include` is `["~DEFAULT_BRANCH"]`,
+  so only the default branch is gated)
+
+#### Scenario: User-owned and org-owned new adopters get identical configuration
+
+- **WHEN** the operator runs `gh-bootstrap.sh` against a
+  user-owned repository with no pre-existing remcc-managed
+  controls
+- **AND** the operator runs `gh-bootstrap.sh` against an
+  organization-owned repository with no pre-existing
+  remcc-managed controls
+- **THEN** both repositories end up with the same `remcc: require
+  approval on main` ruleset and no other remcc-managed rulesets
+
+#### Scenario: Re-running bootstrap on an already-bootstrapped new adopter is a no-op
+
+- **WHEN** the operator runs `gh-bootstrap.sh` on a repo that
+  already has the `remcc: require approval on main` ruleset
+- **THEN** the idempotency smoke test passes with no diffs
+
+#### Scenario: Bootstrap does not mutate legacy controls on an old adopter
+
+- **WHEN** the operator runs the updated `gh-bootstrap.sh` on a
+  repo that was bootstrapped under the prior three-layer model
+  and still has branch protection on `main` plus the two legacy
+  rulesets
+- **THEN** the script creates the new `remcc: require approval
+  on main` ruleset
+- **AND** branch protection on `main` is left unchanged
+- **AND** the ruleset `remcc: restrict bot to change branches`
+  is left unchanged
+- **AND** the ruleset `remcc: block bot edits under .github` is
+  left unchanged
+
+#### Scenario: Uninstall removes only what this version manages
+
+- **WHEN** the operator runs `gh-bootstrap.sh --uninstall` on a
+  repo that has the new ruleset and (optionally) leftover legacy
+  controls from a prior bootstrap
+- **THEN** the new ruleset `remcc: require approval on main` is
+  removed
+- **AND** any pre-existing branch protection on `main` or legacy
+  rulesets are left in place (the script does not touch them)
+
