@@ -714,8 +714,9 @@ push_and_open_upgrade_pr() {
   local repo="$1" prev_ref="$2" prev_sha="$3" new_ref="$4" new_sha="$5" flagged_paths="$6"
   local body existing_pr
 
-  # If the remote branch already matches our tree, skip the push.
-  git fetch origin "${UPGRADE_BRANCH}" >/dev/null 2>&1 || true
+  # --prune drops a stale local tracking ref when the remote branch was
+  # deleted post-merge, so force-with-lease below doesn't abort with `stale info`.
+  git fetch --prune origin "${UPGRADE_BRANCH}" >/dev/null 2>&1 || true
   if git rev-parse --verify --quiet "refs/remotes/origin/${UPGRADE_BRANCH}" >/dev/null \
      && [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse "origin/${UPGRADE_BRANCH}^{tree}")" ]; then
     log "Branch ${UPGRADE_BRANCH} already in sync with origin; skipping push"

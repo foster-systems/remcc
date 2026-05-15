@@ -283,6 +283,15 @@ pull request from `remcc-upgrade` to `main` is already open on the
 target repository, the command SHALL update the branch tip via
 force-with-lease push and SHALL NOT open a duplicate pull request.
 
+Before the push, `install.sh upgrade` SHALL prune the local tracking
+ref for the upgrade branch if it no longer exists on the remote, so
+that a previously-merged-and-deleted `remcc-upgrade` branch does not
+cause the force-with-lease push to abort with `stale info`.
+Concretely, the pre-push fetch SHALL use `--prune` (or equivalent
+ref-state cleanup) scoped to the upgrade branch, so the lease is
+computed against the remote's current state rather than against a
+stale local tracking ref.
+
 The PR title SHALL identify the upgrade as a remcc upgrade and name
 the new ref. The PR body SHALL include: a source line stating both
 the previous ref/sha and the new ref/sha; the list of files written;
@@ -310,6 +319,20 @@ one-liner (the operator already ran one at `init`).
 - **AND** the existing PR's head branch is updated to the new tip
   via force-with-lease push, if the new templates differ from the
   branch's previous tip
+
+#### Scenario: Second upgrade after merge-and-delete succeeds
+
+- **WHEN** a previous `install.sh upgrade` run opened a PR that the
+  operator merged
+- **AND** the target repository's default post-merge cleanup deleted
+  the remote `remcc-upgrade` branch
+- **AND** the operator's local clone still holds
+  `refs/remotes/origin/remcc-upgrade` pointing at the merged commit
+- **AND** the operator runs `install.sh upgrade --ref <new>` against
+  the same target with a new release
+- **THEN** the upgrade pushes the new tip to a fresh `remcc-upgrade`
+  branch on origin and opens a new pull request, without the
+  force-with-lease push aborting on a stale local tracking ref
 
 ### Requirement: install.sh upgrade short-circuits when no diff exists
 
