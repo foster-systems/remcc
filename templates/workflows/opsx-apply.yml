@@ -320,6 +320,68 @@ jobs:
           echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
           exit "${status}"
 
+      - name: Run /opsx:verify
+        id: verify
+        continue-on-error: true
+        env:
+          CHANGE_NAME: ${{ steps.change.outputs.name }}
+          MODEL: ${{ steps.config.outputs.model }}
+          EFFORT: ${{ steps.config.outputs.effort }}
+        run: |
+          set -o pipefail
+          case "${EFFORT}" in
+            low)    effort_flag="--effort"; effort_value="low" ;;
+            medium) effort_flag="--effort"; effort_value="medium" ;;
+            high)   effort_flag="--effort"; effort_value="high" ;;
+          esac
+          # Mirrors the apply step: stream NDJSON to verify.jsonl and a
+          # human-readable distillation to verify.log + the Actions console.
+          claude --dangerously-skip-permissions \
+            --model "${MODEL}" \
+            "${effort_flag}" "${effort_value}" \
+            --output-format stream-json --verbose \
+            -p "/opsx:verify ${CHANGE_NAME}" 2>&1 \
+            | tee -a verify.jsonl \
+            | jq --unbuffered -r '
+                def tool_summary:
+                  . as $tu | ($tu.input // {}) as $i |
+                  if   $tu.name == "Bash"      then "→ Bash $ \(($i.command // "?") | gsub("\n"; " ↵ "))"
+                  elif $tu.name == "Read"      then "→ Read \($i.file_path // "?")"
+                  elif $tu.name == "Edit"      then "→ Edit \($i.file_path // "?")"
+                  elif $tu.name == "MultiEdit" then "→ MultiEdit \($i.file_path // "?") (\(($i.edits // []) | length) edits)"
+                  elif $tu.name == "Write"     then "→ Write \($i.file_path // "?")"
+                  elif $tu.name == "Grep"      then "→ Grep \"\($i.pattern // "?")\"\(if $i.path then " in \($i.path)" else "" end)"
+                  elif $tu.name == "Glob"      then "→ Glob \($i.pattern // "?")"
+                  elif $tu.name == "WebFetch"  then "→ WebFetch \($i.url // "?")"
+                  elif $tu.name == "WebSearch" then "→ WebSearch \"\($i.query // "?")\""
+                  elif $tu.name == "Task"      then "→ Task[\($i.subagent_type // "general")] \($i.description // "?")"
+                  elif $tu.name == "TodoWrite" then "→ TodoWrite (\(($i.todos // []) | length) items)"
+                  else "→ \($tu.name) \(($i | tostring)[0:200])" end;
+                if .type == "system" and .subtype == "init" then
+                  "[init] model=\(.model // "?") cwd=\(.cwd // "?")"
+                elif .type == "assistant" then
+                  (.message.content // []) | map(
+                    if .type == "text" then .text
+                    elif .type == "tool_use" then tool_summary
+                    else empty end
+                  ) | join("\n")
+                elif .type == "result" then
+                  "[done] subtype=\(.subtype // "?") cost_usd=\(.total_cost_usd // .cost_usd // 0)"
+                else empty end
+              ' \
+            | tee -a verify.log
+          status="${PIPESTATUS[0]}"
+          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
+          # Extract the last assistant message's concatenated text into
+          # verify.md. Use `// ""` and a `|| :` fallback so a crashed
+          # verify (empty/malformed NDJSON) leaves the step exit code
+          # driven by claude's PIPESTATUS, not by jq.
+          jq -rs '
+            (([.[] | select(.type == "assistant")] | last) // {}) as $last
+            | (($last.message.content // []) | map(select(.type == "text") | .text) | join("")) // ""
+          ' verify.jsonl > verify.md 2>/dev/null || : > verify.md
+          exit "${status}"
+
       - name: Stage and commit agent output
         id: commit
         env:
@@ -331,7 +393,7 @@ jobs:
           git add -A
           # Runner-local logs are already uploaded as the agent-logs artifact;
           # keep them out of git history.
-          git reset -- apply.jsonl apply.log validate.log 2>/dev/null || true
+          git reset -- apply.jsonl apply.log validate.log verify.md verify.jsonl 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No staged changes; skipping commit."
             echo "committed=false" >> "$GITHUB_OUTPUT"
@@ -373,6 +435,7 @@ jobs:
           CHANGE_NAME: ${{ steps.change.outputs.name }}
           APPLY_EXIT: ${{ steps.apply.outputs.exit_code }}
           VALIDATE_EXIT: ${{ steps.validate.outputs.exit_code }}
+          VERIFY_EXIT: ${{ steps.verify.outputs.exit_code }}
           MODEL: ${{ steps.config.outputs.model }}
           EFFORT: ${{ steps.config.outputs.effort }}
           MODEL_SOURCE: ${{ steps.config.outputs.model_source }}
@@ -397,6 +460,7 @@ jobs:
           - effort: \`${EFFORT:-unknown}\` (source: ${EFFORT_SOURCE:-unknown})
           - apply exit code: \`${APPLY_EXIT:-unknown}\`
           - validate exit code: \`${VALIDATE_EXIT:-unknown}\`
+          - verify exit code: \`${VERIFY_EXIT:-unknown}\`
           - run: ${RUN_URL}
 
           Logs are attached to the workflow run as artifact \`agent-logs-${CHANGE_NAME}\` (14 day retention).
@@ -419,6 +483,41 @@ jobs:
             gh pr comment "${existing}" --body "${body}"
           fi
 
+      - name: Post verify report
+        if: always() && steps.change.outputs.name != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.change.outputs.branch }}
+          CHANGE_NAME: ${{ steps.change.outputs.name }}
+          VERIFY_EXIT: ${{ steps.verify.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          pr_number=$(gh pr list --head "${BRANCH}" --base main --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -z "${pr_number}" ]; then
+            echo "No open PR for branch ${BRANCH}; skipping verify comment."
+            exit 0
+          fi
+          # GitHub caps PR-comment bodies at 65 536 chars. Reserve headroom
+          # for the truncation footer so the final body stays under the cap.
+          MAX_BYTES=65000
+          if [ -s verify.md ]; then
+            size=$(wc -c < verify.md | tr -d ' ')
+            if [ "${size}" -gt "${MAX_BYTES}" ]; then
+              {
+                head -c "${MAX_BYTES}" verify.md
+                printf '\n\n---\n_Report truncated at %s bytes (full size: %s bytes). See the `agent-logs-%s` workflow artifact for the complete `verify.md`._\n' \
+                  "${MAX_BYTES}" "${size}" "${CHANGE_NAME}"
+              } > verify.comment.md
+              gh pr comment "${pr_number}" --body-file verify.comment.md
+            else
+              gh pr comment "${pr_number}" --body-file verify.md
+            fi
+          else
+            fallback="$(printf '_Verify did not produce a report (verify exit code: \`%s\`). See the \`agent-logs-%s\` workflow artifact for the partial NDJSON stream._' \
+              "${VERIFY_EXIT:-unknown}" "${CHANGE_NAME}")"
+            gh pr comment "${pr_number}" --body "${fallback}"
+          fi
+
       - name: Upload agent logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -428,5 +527,7 @@ jobs:
             apply.log
             apply.jsonl
             validate.log
+            verify.md
+            verify.jsonl
           if-no-files-found: ignore
           retention-days: 14
