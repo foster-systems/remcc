@@ -368,7 +368,7 @@ configure_remcc_app_slug_variable() {
 remove_remcc_app_slug_variable() {
   local repo="$1"
   log "Removing repository variable REMCC_APP_SLUG (${repo})"
-  if gh api "repos/${repo}/actions/variables/REMCC_APP_SLUG" --silent >/dev/null 2>&1; then
+  if repo_variable_exists "${repo}" REMCC_APP_SLUG; then
     gh variable delete REMCC_APP_SLUG --repo "${repo}" >/dev/null
     sub "removed"
   else
@@ -443,6 +443,16 @@ get_repo_variable_value() {
   printf '%s' "${body}" | jq -r 'if type=="object" and has("value") then .value else empty end'
 }
 
+# Existence test that won't false-negative on a transient API blip the way a
+# bare `gh api --silent` exit-code check does. Fetch the body, then decide
+# from JSON shape — same approach as get_repo_variable_value.
+repo_variable_exists() {
+  local repo="$1" name="$2" body
+  body="$(gh api "repos/${repo}/actions/variables/${name}" 2>/dev/null)" || true
+  [ -n "${body}" ] || return 1
+  printf '%s' "${body}" | jq -e 'type=="object" and has("value")' >/dev/null 2>&1
+}
+
 set_repo_variable() {
   local repo="$1" name="$2" value="$3" current
   current="$(get_repo_variable_value "${repo}" "${name}")"
@@ -474,7 +484,7 @@ remove_apply_config_variables() {
   local repo="$1" name
   log "Removing apply configuration variables (${repo})"
   for name in OPSX_APPLY_MODEL OPSX_APPLY_EFFORT; do
-    if gh api "repos/${repo}/actions/variables/${name}" --silent >/dev/null 2>&1; then
+    if repo_variable_exists "${repo}" "${name}"; then
       gh variable delete "${name}" --repo "${repo}" >/dev/null
       sub "${name} removed"
     else
@@ -507,21 +517,24 @@ snapshot_state() {
     fi
   done
   echo "# remcc App slug variable"
-  if gh api "repos/${repo}/actions/variables/REMCC_APP_SLUG" --silent >/dev/null 2>&1; then
-    gh api "repos/${repo}/actions/variables/REMCC_APP_SLUG" \
-      | jq '{name, value}' || true
-  else
-    echo "{\"name\":\"REMCC_APP_SLUG\",\"value\":null}"
-  fi
+  snapshot_repo_variable "${repo}" REMCC_APP_SLUG
   echo "# apply configuration variables"
   for name in OPSX_APPLY_MODEL OPSX_APPLY_EFFORT; do
-    if gh api "repos/${repo}/actions/variables/${name}" --silent >/dev/null 2>&1; then
-      gh api "repos/${repo}/actions/variables/${name}" \
-        | jq '{name, value}' || true
-    else
-      echo "{\"name\":\"${name}\",\"value\":null}"
-    fi
+    snapshot_repo_variable "${repo}" "${name}"
   done
+}
+
+# Single fetch + jq-shape parse: avoids the two-call existence/fetch pattern
+# whose first call can flake on a transient API blip and produce phantom
+# {"value":null} entries in the snapshot.
+snapshot_repo_variable() {
+  local repo="$1" name="$2" body
+  body="$(gh api "repos/${repo}/actions/variables/${name}" 2>/dev/null)" || true
+  if [ -n "${body}" ] && printf '%s' "${body}" | jq -e 'type=="object" and has("value")' >/dev/null 2>&1; then
+    printf '%s' "${body}" | jq '{name, value}'
+  else
+    echo "{\"name\":\"${name}\",\"value\":null}"
+  fi
 }
 
 run_idempotency_smoke_test() {
