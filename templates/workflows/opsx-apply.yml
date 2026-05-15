@@ -412,7 +412,7 @@ jobs:
             gh pr create \
               --base main \
               --head "${BRANCH}" \
-              --title "/opsx:apply ${CHANGE_NAME}" \
+              --title "Change: ${CHANGE_NAME}" \
               --body "${body}" \
               ${draft_flag}
           else
