@@ -43,7 +43,6 @@ something unintended, the GitHub-side controls bound the blast radius.
 | Secret scanning + secret push protection | A push containing a credential that matches a known pattern (including Anthropic API keys) is rejected at push time. Backstop against `ANTHROPIC_API_KEY` accidentally landing in a commit. | Public repos free; private repos require GHAS. |
 | GitHub Actions log redaction of `${{ secrets.* }}` values | Secrets stored in the repo's secret store are redacted from job logs and step outputs. Does not catch secret-shaped content in *commits*. | Always |
 | Workflow trigger limited to `push: change/**` and `workflow_dispatch` | The agent only runs in a syntactically obvious branch namespace. Any push outside `change/**` does not trigger the agent. | Always |
-| Allow Actions to create PRs (per-repo toggle) | Permits the workflow's PR-creation step to succeed under `GITHUB_TOKEN`. Without this, the workflow fails at PR creation; with it, only the create-PR capability is exercised — the workflow does not approve PRs. | Always (`gh-bootstrap.sh` enables it) |
 
 ## GitHub App credentials
 

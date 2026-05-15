@@ -72,7 +72,6 @@ snapshot() {
   mkdir -p "$out"
   gh api "repos/$TARGET/branches/main/protection" 2>/dev/null > "$out/protection.json" || echo '{}' > "$out/protection.json"
   gh api "repos/$TARGET/rulesets" > "$out/rulesets.json"
-  gh api "repos/$TARGET/actions/permissions/workflow" > "$out/actions-perms.json"
 }
 
 normalize() {
@@ -233,7 +232,7 @@ PR_COUNT="$(gh pr list --repo "$TARGET" --head remcc-init --state open --json nu
   || fail "expected 1 open PR for remcc-init, found $PR_COUNT"
 
 S2="$(mktemp -d)"; snapshot "$S2"
-for n in protection rulesets actions-perms; do
+for n in protection rulesets; do
   if diff -q <(normalize "$S1/$n.json") <(normalize "$S2/$n.json") >/dev/null; then
     pass "idempotent: $n"
   else

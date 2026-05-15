@@ -213,40 +213,6 @@ JSON
 }
 
 # ----------------------------------------------------------------------------
-# Allow GitHub Actions to create pull requests
-# ----------------------------------------------------------------------------
-#
-# By default, the auto-provisioned GITHUB_TOKEN cannot open or approve PRs.
-# The workflow's "Open or update PR" step needs this enabled. The setting maps
-# to the "Allow GitHub Actions to create and approve pull requests" toggle in
-# Settings → Actions → General. Note: this also allows Actions to *approve*
-# PRs, but the workflow's permissions block does not exercise that capability.
-
-configure_actions_pr_creation() {
-  local repo="$1"
-  log "Allow GitHub Actions to create pull requests (${repo})"
-  gh api --method PUT "repos/${repo}/actions/permissions/workflow" --input - >/dev/null <<'JSON'
-{
-  "default_workflow_permissions": "write",
-  "can_approve_pull_request_reviews": true
-}
-JSON
-  sub "enabled"
-}
-
-disable_actions_pr_creation() {
-  local repo="$1"
-  log "Disabling GitHub Actions PR creation (${repo})"
-  gh api --method PUT "repos/${repo}/actions/permissions/workflow" --input - >/dev/null <<'JSON'
-{
-  "default_workflow_permissions": "read",
-  "can_approve_pull_request_reviews": false
-}
-JSON
-  sub "disabled"
-}
-
-# ----------------------------------------------------------------------------
 # ANTHROPIC_API_KEY repository secret
 # ----------------------------------------------------------------------------
 
@@ -531,8 +497,6 @@ snapshot_state() {
   fi
   echo "# security_and_analysis"
   gh api "repos/${repo}" --jq '.security_and_analysis' 2>/dev/null || true
-  echo "# actions workflow permissions"
-  gh api "repos/${repo}/actions/permissions/workflow" 2>/dev/null || true
   echo "# remcc App secrets (presence only — values are never read back)"
   secret_names="$(gh secret list --repo "${repo}" --json name --jq '.[].name' 2>/dev/null || true)"
   for name in REMCC_APP_ID REMCC_APP_PRIVATE_KEY WORKFLOW_PAT; do
@@ -566,7 +530,6 @@ run_idempotency_smoke_test() {
   before="$(snapshot_state "${repo}")"
   configure_main_ruleset "${repo}"
   configure_secret_scanning "${repo}"
-  configure_actions_pr_creation "${repo}"
   configure_remcc_app_slug_variable "${repo}"
   remove_workflow_pat_legacy "${repo}"
   configure_apply_config_variables "${repo}"
@@ -615,7 +578,6 @@ install_remcc() {
 
   configure_main_ruleset "${repo}"
   configure_secret_scanning "${repo}"
-  configure_actions_pr_creation "${repo}"
   configure_anthropic_secret "${repo}"
   configure_remcc_app_secrets "${repo}"
   configure_remcc_app_slug_variable "${repo}"
@@ -637,7 +599,6 @@ uninstall_remcc() {
 
   remove_ruleset_by_name "${repo}" "${RULESET_MAIN_NAME}"
   disable_secret_scanning "${repo}"
-  disable_actions_pr_creation "${repo}"
   remove_anthropic_secret "${repo}"
   remove_remcc_app_secrets "${repo}"
   remove_remcc_app_slug_variable "${repo}"
