@@ -124,23 +124,6 @@ secret-leak protection in that configuration.
   unavailable and that the only remaining secret-leak protection is
   Actions log redaction, and continues with subsequent steps
 
-### Requirement: Bootstrap enables Actions to create pull requests
-
-`gh-bootstrap.sh` SHALL enable the GitHub Actions setting that allows
-the auto-provisioned `GITHUB_TOKEN` to open pull requests, by setting
-both `default_workflow_permissions` to `write` and
-`can_approve_pull_request_reviews` to `true` on the
-`/repos/{owner}/{repo}/actions/permissions/workflow` endpoint. The
-workflow does not exercise the approve capability; the toggle is
-required because GitHub couples create-PR and approve-PR under one
-flag.
-
-#### Scenario: Workflow's PR-creation step succeeds after bootstrap
-
-- **WHEN** the workflow runs `gh pr create` from inside a runner
-  using `GITHUB_TOKEN` after bootstrap has been applied
-- **THEN** the PR is created without a permissions error
-
 ### Requirement: Bootstrap installs ANTHROPIC_API_KEY secret
 
 `gh-bootstrap.sh` SHALL prompt the operator for an Anthropic API
