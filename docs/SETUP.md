@@ -405,13 +405,10 @@ The script:
    private repos without GHAS, the script prints a warning and
    continues. The remaining secret-leak protection is GitHub
    Actions log redaction (built into Actions, no setup required).
-4. Enables the GitHub Actions setting that allows `GITHUB_TOKEN`
-   to open pull requests. This setting defaults to off; without it,
-   the workflow's PR-creation step always fails.
-5. Prompts for `ANTHROPIC_API_KEY` (input hidden) and uploads it as
+4. Prompts for `ANTHROPIC_API_KEY` (input hidden) and uploads it as
    the repository secret. If the variable is already set in your
    shell, the script picks it up and does not prompt.
-6. Prompts for `REMCC_APP_ID` and `REMCC_APP_PRIVATE_KEY` (input
+5. Prompts for `REMCC_APP_ID` and `REMCC_APP_PRIVATE_KEY` (input
    hidden) and uploads each as a repository secret. The workflow
    exchanges these for a short-lived GitHub App installation token
    at the start of every run, and uses that token for checkout,
@@ -420,24 +417,24 @@ The script:
    produce these values. If both variables are already set in
    your shell (PEM via `REMCC_APP_PRIVATE_KEY="$(cat key.pem)"`),
    the script picks them up and does not prompt.
-7. Prompts for `REMCC_APP_SLUG` (input visible — the slug is not
+6. Prompts for `REMCC_APP_SLUG` (input visible — the slug is not
    secret) and writes it as a repository **variable** (not a
    secret). The workflow constructs the bot's commit identity
    from this slug. Empty input is a hard error. If the variable
    is already set in your shell, the script picks it up.
-8. If a legacy `WORKFLOW_PAT` secret is present (from a previous
+7. If a legacy `WORKFLOW_PAT` secret is present (from a previous
    remcc release), it is deleted now that the App credentials are
    in place. Re-running the script when `WORKFLOW_PAT` is already
    gone is a no-op.
-9. Prompts for `OPSX_APPLY_MODEL` and `OPSX_APPLY_EFFORT` — the
+8. Prompts for `OPSX_APPLY_MODEL` and `OPSX_APPLY_EFFORT` — the
    per-repo defaults for the `/opsx:apply` step. Empty input
    leaves the variable unset, in which case the workflow's
    baked-in defaults (`sonnet` / `high`) apply. The script reads
    `OPSX_APPLY_MODEL` / `OPSX_APPLY_EFFORT` from the environment
    if set, so the prompts can be skipped in scripted runs. See
    "Configuring the apply model" below for what these knobs do.
-10. Runs an idempotency smoke test: re-applies every change and
-    diffs the resulting state. A diff is a bug — please report it.
+9. Runs an idempotency smoke test: re-applies every change and
+   diffs the resulting state. A diff is a bug — please report it.
 
 Re-running the script later is a no-op.
 
@@ -775,9 +772,9 @@ remcc is reversible. To remove it from a target repository:
    ```
    This deletes the `remcc: require approval on main` ruleset,
    disables secret scanning + push protection (where applicable),
-   reverts the Allow-Actions-create-PRs toggle, and deletes the
-   `ANTHROPIC_API_KEY`, `REMCC_APP_ID`, and `REMCC_APP_PRIVATE_KEY`
-   repository secrets and the `REMCC_APP_SLUG` repository variable.
+   and deletes the `ANTHROPIC_API_KEY`, `REMCC_APP_ID`, and
+   `REMCC_APP_PRIVATE_KEY` repository secrets and the
+   `REMCC_APP_SLUG` repository variable.
    (Any pre-existing legacy `WORKFLOW_PAT` secret is also removed.)
    It does not touch any files in your repository, and it does not
    delete the GitHub App itself or revoke its private key — manage

@@ -67,7 +67,6 @@ snapshot() {
   mkdir -p "$out"
   gh api "repos/$TARGET/branches/main/protection" 2>/dev/null > "$out/protection.json" || echo '{}' > "$out/protection.json"
   gh api "repos/$TARGET/rulesets" > "$out/rulesets.json"
-  gh api "repos/$TARGET/actions/permissions/workflow" > "$out/actions-perms.json"
 }
 
 normalize() {
@@ -132,7 +131,7 @@ fi
 grep -q '.remcc/version' "$UPG_ERR_LOG" && pass "error names .remcc/version" || fail "error did not mention .remcc/version"
 grep -qi 'install.sh init' "$UPG_ERR_LOG" && pass "error points at install.sh init" || fail "error did not point at install.sh init"
 S_AFTER="$(mktemp -d)"; snapshot "$S_AFTER"
-for n in protection rulesets actions-perms; do
+for n in protection rulesets; do
   if diff -q <(normalize "$S_BEFORE/$n.json") <(normalize "$S_AFTER/$n.json") >/dev/null; then
     pass "no GitHub mutation: $n"
   else
@@ -298,7 +297,7 @@ S_BEFORE_RC="$(mktemp -d)"; snapshot "$S_BEFORE_RC"
 bash <(curl -fsSL "$NEW_INSTALL_URL") reconfigure --ref "$NEW_REF"
 pass "second reconfigure exited 0"
 S_AFTER_RC="$(mktemp -d)"; snapshot "$S_AFTER_RC"
-for n in protection rulesets actions-perms; do
+for n in protection rulesets; do
   if diff -q <(normalize "$S_BEFORE_RC/$n.json") <(normalize "$S_AFTER_RC/$n.json") >/dev/null; then
     pass "reconfigure idempotent: $n"
   else
